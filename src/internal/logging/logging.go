@@ -23,7 +23,7 @@ func Setup() (*slog.Logger, *os.File, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("open log file: %w", err)
 	}
-	handler := slog.NewTextHandler(f, &slog.HandlerOptions{Level: slog.LevelInfo})
+	handler := slog.NewTextHandler(f, &slog.HandlerOptions{Level: slog.LevelDebug})
 	return slog.New(handler), f, nil
 }
 

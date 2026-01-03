@@ -80,7 +80,7 @@ func TestNavigation(t *testing.T) {
 
 	m := New(cfg, prov, func(p config.Profile) (provider.Provider, error) {
 		return prov, nil
-	}, pl, nil, theme, StartupOptions{})
+	}, pl, nil, theme, StartupOptions{}, nil)
 
 	// 1. Initial State
 	if m.screen != screenLoading {
@@ -182,7 +182,7 @@ func TestNextPrevDoesNotAddToQueue(t *testing.T) {
 
 	m := New(cfg, prov, func(p config.Profile) (provider.Provider, error) {
 		return prov, nil
-	}, pl, nil, theme, StartupOptions{})
+	}, pl, nil, theme, StartupOptions{}, nil)
 
 	// Initialize model
 	m, _ = updateModel(m, initMsg{err: nil})

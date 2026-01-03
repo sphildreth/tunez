@@ -55,7 +55,7 @@ Examples:
   tunez                                    # Start interactive TUI
   tunez --doctor                           # Check setup
   tunez --scan                             # Rescan music library
-  tunez --random --play                    # Play random songs
+  tunez --random --play                    # Play random tracks
   tunez --artist "Pink Floyd" --play       # Play artist
   tunez --artist "Queen" --album "News"    # Queue matching album
 
@@ -129,7 +129,7 @@ Examples:
 
 	model := app.New(cfg, prov, func(p config.Profile) (provider.Provider, error) {
 		return buildProvider(p)
-	}, ctrl, profile.Settings, theme, startupOpts)
+	}, ctrl, profile.Settings, theme, startupOpts, logger)
 	if _, err := tea.NewProgram(model, tea.WithAltScreen()).Run(); err != nil {
 		logger.Error("run tui", slog.Any("err", err))
 		log.Fatalf("tui: %v", err)

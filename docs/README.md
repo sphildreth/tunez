@@ -2,6 +2,19 @@
 
 This directory contains design and planning documents for the Tunez terminal music player.
 
+## Terminology
+
+| Term | Definition |
+|------|------------|
+| **Track** | Any audio file or stream in the library. This is the canonical term used throughout Tunez. |
+| **Song** | A specific type of track containing a musical composition with vocals. Not all tracks are songs (e.g., instrumentals, interludes, spoken word, sound effects). |
+| **Album** | A collection of tracks released together. |
+| **Artist** | The performer or creator associated with tracks/albums. |
+| **Queue** | The ordered list of tracks pending playback. |
+| **Now Playing** | The currently playing track. |
+
+> **Convention:** Always use "track" in code, UI, logs, and documentation. Avoid "song" except when specifically referring to vocal music compositions.
+
 ## Document Overview
 
 | Document | Purpose |

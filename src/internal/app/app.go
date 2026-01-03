@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -107,6 +108,7 @@ type Model struct {
 	player   *player.Controller
 	queue    *queue.Queue
 	theme    ui.Theme
+	logger   *slog.Logger
 
 	screen          screen
 	focusedPane     pane // which pane has focus (nav or content)
@@ -165,7 +167,10 @@ func (f searchFilter) String() string {
 	}
 }
 
-func New(cfg *config.Config, prov provider.Provider, factory ProviderFactory, player *player.Controller, settings any, theme ui.Theme, opts StartupOptions) Model {
+func New(cfg *config.Config, prov provider.Provider, factory ProviderFactory, player *player.Controller, settings any, theme ui.Theme, opts StartupOptions, logger *slog.Logger) Model {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return Model{
 		cfg:             cfg,
 		provider:        prov,
@@ -173,6 +178,7 @@ func New(cfg *config.Config, prov provider.Provider, factory ProviderFactory, pl
 		player:          player,
 		queue:           queue.New(),
 		theme:           theme,
+		logger:          logger,
 		screen:          screenLoading,
 		status:          "Loading…",
 		profileSettings: settings,
@@ -501,6 +507,11 @@ type addNextTrackMsg struct {
 	track provider.Track
 }
 
+// addAndPlayTrackMsg signals that a track should be added to queue and played
+type addAndPlayTrackMsg struct {
+	track provider.Track
+}
+
 func (m Model) addTrackCmd(track provider.Track) tea.Cmd {
 	return func() tea.Msg {
 		return addTrackMsg{track: track}
@@ -510,6 +521,14 @@ func (m Model) addTrackCmd(track provider.Track) tea.Cmd {
 func (m Model) addNextTrackCmd(track provider.Track) tea.Cmd {
 	return func() tea.Msg {
 		return addNextTrackMsg{track: track}
+	}
+}
+
+// addAndPlayTrackCmd adds a track to queue and starts playing it.
+// Use this when playing a track that's not already in the queue (e.g., from library/search).
+func (m Model) addAndPlayTrackCmd(track provider.Track) tea.Cmd {
+	return func() tea.Msg {
+		return addAndPlayTrackMsg{track: track}
 	}
 }
 
@@ -557,6 +576,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.queue.AddNext(msg.track)
 		m.status = "Playing next: " + msg.track.Title
 		return m, nil
+	case addAndPlayTrackMsg:
+		// Add to queue and play - used for library/search selections
+		m.logger.Debug("add and play track", slog.String("track_id", msg.track.ID), slog.String("title", msg.track.Title), slog.Int("queue_len_before", m.queue.Len()))
+		m.queue.Add(msg.track)
+		m.logger.Debug("track added to queue", slog.Int("queue_len_after", m.queue.Len()), slog.Int("current_idx", m.queue.CurrentIndex()))
+		return m, m.playTrackCmd(msg.track)
 	case profileSwitchedMsg:
 		m.provider = msg.provider
 		m.cfg.ActiveProfile = msg.profile.ID
@@ -637,6 +662,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if matchKey(key, m.cfg.Keybindings.PlayPause) {
 			m.paused = !m.paused
+			m.logger.Debug("play/pause toggled", slog.Bool("paused", m.paused), slog.String("now_playing", m.nowPlaying.Title))
 			return m, func() tea.Msg {
 				if err := m.player.TogglePause(m.paused); err != nil {
 					return playerMsg{Err: err}
@@ -645,14 +671,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if matchKey(key, m.cfg.Keybindings.NextTrack) {
+			m.logger.Debug("next track pressed", slog.Int("queue_len", m.queue.Len()), slog.Int("current_idx", m.queue.CurrentIndex()))
 			if t, err := m.queue.Next(); err == nil {
+				m.logger.Debug("next track", slog.String("track_id", t.ID), slog.String("title", t.Title), slog.Int("new_idx", m.queue.CurrentIndex()))
 				return m, m.playTrackCmd(t)
+			} else {
+				m.logger.Debug("next track failed", slog.Any("err", err))
 			}
 			return m, nil
 		}
 		if matchKey(key, m.cfg.Keybindings.PrevTrack) {
+			m.logger.Debug("prev track pressed", slog.Int("queue_len", m.queue.Len()), slog.Int("current_idx", m.queue.CurrentIndex()))
 			if t, err := m.queue.Prev(); err == nil {
+				m.logger.Debug("prev track", slog.String("track_id", t.ID), slog.String("title", t.Title), slog.Int("new_idx", m.queue.CurrentIndex()))
 				return m, m.playTrackCmd(t)
+			} else {
+				m.logger.Debug("prev track failed", slog.Any("err", err))
 			}
 			return m, nil
 		}
@@ -954,6 +988,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "Loaded more results"
 		}
 	case startupSearchMsg:
+		m.logger.Debug("startup search result", slog.Int("track_count", len(msg.tracks)), slog.Any("err", msg.err))
 		if msg.err != nil {
 			return m.setError(msg.err)
 		}
@@ -962,12 +997,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		// Add all tracks to queue
-		for _, t := range msg.tracks {
+		for i, t := range msg.tracks {
+			m.logger.Debug("adding startup track to queue", slog.Int("index", i), slog.String("track_id", t.ID), slog.String("title", t.Title))
 			m.queue.Add(t)
 		}
+		m.logger.Debug("startup tracks added", slog.Int("queue_len", m.queue.Len()), slog.Int("current_idx", m.queue.CurrentIndex()))
 		m.status = fmt.Sprintf("Added %d tracks to queue", len(msg.tracks))
 		// If autoplay is enabled, play the first track
 		if m.startupOpts.AutoPlay {
+			m.logger.Debug("auto-playing first track")
 			m.screen = screenQueue
 			m.focusedPane = paneContent
 			return m, m.playQueueTrackCmd(0)
@@ -998,11 +1036,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case playTrackMsg:
 		if msg.err != nil {
+			m.logger.Error("play track failed", slog.Any("err", msg.err))
 			return m.setError(msg.err)
 		} else {
+			m.logger.Debug("play track success", slog.String("track_id", msg.track.ID), slog.String("title", msg.track.Title), slog.Int("queue_idx", m.queue.CurrentIndex()))
 			m.nowPlaying = msg.track
 			m.paused = false
-			m.queue.Add(msg.track)
 			m.status = "Playing " + msg.track.Title
 		}
 	case playerMsg:
@@ -1025,8 +1064,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.setError(msg.Err)
 		}
 		if msg.Ended {
+			m.logger.Debug("track ended, advancing to next")
 			if t, err := m.queue.Next(); err == nil {
+				m.logger.Debug("auto-advancing to next track", slog.String("track_id", t.ID), slog.String("title", t.Title))
 				return m, m.playTrackCmd(t)
+			} else {
+				m.logger.Debug("no more tracks in queue", slog.Any("err", err))
 			}
 		}
 		return m, m.watchPlayerCmd()
@@ -1043,7 +1086,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		if len(m.tracks) > 0 {
 			idx := clamp(m.selection, 0, len(m.tracks)-1)
 			track := m.tracks[idx]
-			return m, m.playTrackCmd(track)
+			return m, m.addAndPlayTrackCmd(track)
 		}
 		if len(m.albums) > 0 {
 			idx := clamp(m.selection, 0, len(m.albums)-1)
@@ -1064,7 +1107,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			if len(m.searchResults.Tracks.Items) > 0 {
 				idx := clamp(m.selection, 0, len(m.searchResults.Tracks.Items)-1)
 				track := m.searchResults.Tracks.Items[idx]
-				return m, m.playTrackCmd(track)
+				return m, m.addAndPlayTrackCmd(track)
 			}
 		case filterAlbums:
 			if len(m.searchResults.Albums.Items) > 0 {
@@ -1121,6 +1164,7 @@ func (m Model) playTrackCmd(track provider.Track) tea.Cmd {
 }
 
 func (m Model) playQueueTrackCmd(index int) tea.Cmd {
+	m.logger.Debug("playQueueTrackCmd called", slog.Int("index", index), slog.Int("queue_len", m.queue.Len()))
 	return func() tea.Msg {
 		items := m.queue.Items()
 		if index < 0 || index >= len(items) {
@@ -1472,7 +1516,10 @@ func (m Model) renderLibrary() string {
 				prefix = " ▶ "
 				style = selectedStyle
 			}
-			dur := fmt.Sprintf("%d:%02d", t.DurationMs/60000, (t.DurationMs/1000)%60)
+			dur := "—:——"
+			if t.DurationMs > 0 {
+				dur = fmt.Sprintf("%d:%02d", t.DurationMs/60000, (t.DurationMs/1000)%60)
+			}
 			line := fmt.Sprintf("%s%02d  %s — %s  %s", prefix, i+1, t.ArtistName, t.Title, m.theme.Dim.Render(dur))
 			items = append(items, style.Render(line))
 		}
@@ -1620,7 +1667,10 @@ func (m Model) renderSearch() string {
 					prefix = " ▶ "
 					style = selectedStyle
 				}
-				dur := fmt.Sprintf("%d:%02d", t.DurationMs/60000, (t.DurationMs/1000)%60)
+				dur := "—:——"
+				if t.DurationMs > 0 {
+					dur = fmt.Sprintf("%d:%02d", t.DurationMs/60000, (t.DurationMs/1000)%60)
+				}
 				line := fmt.Sprintf("%s%02d  %s — %s  %s", prefix, i+1, t.ArtistName, t.Title, m.theme.Dim.Render(dur))
 				items = append(items, style.Render(line))
 			}
@@ -1730,7 +1780,10 @@ func (m Model) renderQueue() string {
 				style = selectedStyle
 			}
 
-			dur := fmt.Sprintf("%d:%02d", t.DurationMs/60000, (t.DurationMs/1000)%60)
+			dur := "—:——"
+			if t.DurationMs > 0 {
+				dur = fmt.Sprintf("%d:%02d", t.DurationMs/60000, (t.DurationMs/1000)%60)
+			}
 			line := fmt.Sprintf("%s%02d  %s — %s  %s", prefix, i+1, t.ArtistName, t.Title, m.theme.Dim.Render(dur))
 			renderedItems = append(renderedItems, style.Render(line))
 		}
