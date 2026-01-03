@@ -342,7 +342,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "m":
 			m.muted = !m.muted
 			return m, func() tea.Msg {
-				_ = m.player.SetMute(m.muted)
+				if err := m.player.SetMute(m.muted); err != nil {
+					return playerMsg{Err: err}
+				}
 				return nil
 			}
 		case "s":
@@ -352,10 +354,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.queue.CycleRepeat()
 			return m, nil
 		case "H":
-			_ = m.player.Seek(float64(-m.cfg.Player.SeekLarge))
+			if err := m.player.Seek(float64(-m.cfg.Player.SeekLarge)); err != nil {
+				return m.setError(err)
+			}
 			return m, nil
 		case "L":
-			_ = m.player.Seek(float64(m.cfg.Player.SeekLarge))
+			if err := m.player.Seek(float64(m.cfg.Player.SeekLarge)); err != nil {
+				return m.setError(err)
+			}
 			return m, nil
 		case "a":
 			if t, ok := m.selectedTrack(); ok {
@@ -446,12 +452,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			// Seeking for other screens
-			_ = m.player.Seek(float64(-m.cfg.Player.SeekSmall))
+			if err := m.player.Seek(float64(-m.cfg.Player.SeekSmall)); err != nil {
+				return m.setError(err)
+			}
 		case "l", "right":
 			if m.screen == screenLibrary {
 				return m.handleEnter()
 			}
-			_ = m.player.Seek(float64(m.cfg.Player.SeekSmall))
+			if err := m.player.Seek(float64(m.cfg.Player.SeekSmall)); err != nil {
+				return m.setError(err)
+			}
 		case "/":
 			m.screen = screenSearch
 			m.searchQ = ""
@@ -469,7 +479,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case " ":
 			m.paused = !m.paused
 			return m, tea.Batch(func() tea.Msg {
-				_ = m.player.TogglePause(m.paused)
+				if err := m.player.TogglePause(m.paused); err != nil {
+					return playerMsg{Err: err}
+				}
 				return nil
 			})
 		case "d":
@@ -518,13 +530,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "-":
 			m.volume -= float64(m.cfg.Player.VolumeStep)
 			return m, func() tea.Msg {
-				_ = m.player.SetVolume(m.volume)
+				if err := m.player.SetVolume(m.volume); err != nil {
+					return playerMsg{Err: err}
+				}
 				return nil
 			}
 		case "+":
 			m.volume += float64(m.cfg.Player.VolumeStep)
 			return m, func() tea.Msg {
-				_ = m.player.SetVolume(m.volume)
+				if err := m.player.SetVolume(m.volume); err != nil {
+					return playerMsg{Err: err}
+				}
 				return nil
 			}
 		default:
@@ -808,10 +824,10 @@ func (m Model) renderNowPlaying() string {
 		if empty < 0 {
 			empty = 0
 		}
-		
+
 		bar := strings.Repeat("━", filled) + strings.Repeat("─", empty)
 		b.WriteString(m.theme.Highlight.Render(bar) + "\n")
-		
+
 		// Time
 		tPos := fmt.Sprintf("%d:%02d", int(m.timePos)/60, int(m.timePos)%60)
 		dur := fmt.Sprintf("%d:%02d", int(m.duration)/60, int(m.duration)%60)
@@ -869,7 +885,7 @@ func (m Model) renderLibrary() string {
 func (m Model) renderSearch() string {
 	var b strings.Builder
 	b.WriteString(m.theme.Title.Render(fmt.Sprintf("Search (%s): %s\n", m.searchFilter, m.searchQ)))
-	
+
 	switch m.searchFilter {
 	case filterTracks:
 		for i, t := range m.searchResults.Tracks.Items {
@@ -941,7 +957,7 @@ func (m Model) renderLyrics() string {
 func (m Model) renderConfig() string {
 	var b strings.Builder
 	b.WriteString(m.theme.Title.Render("Config") + "\n\n")
-	
+
 	b.WriteString(m.theme.Title.Render("Profiles") + "\n")
 	for i, p := range m.cfg.Profiles {
 		prefix := "  "
@@ -1009,7 +1025,7 @@ func (m Model) renderPlayerBar() string {
 	if m.duration > 0 {
 		progress = fmt.Sprintf(" %.0f/%.0fs", m.timePos, m.duration)
 	}
-	
+
 	shuffle := ""
 	if m.queue.IsShuffled() {
 		shuffle = " 🔀"
@@ -1021,12 +1037,12 @@ func (m Model) renderPlayerBar() string {
 	case queue.RepeatOne:
 		repeat = " 🔂"
 	}
-	
+
 	volStr := fmt.Sprintf("Vol: %.0f%%", m.volume)
 	if m.muted {
 		volStr = "Muted"
 	}
-	
+
 	return fmt.Sprintf("%s %s%s  %s%s%s", state, name, progress, volStr, shuffle, repeat)
 }
 

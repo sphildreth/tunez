@@ -260,11 +260,11 @@ func (p *Provider) GetStream(ctx context.Context, trackId string) (provider.Stre
 }
 
 func (p *Provider) GetLyrics(ctx context.Context, trackId string) (provider.Lyrics, error) {
-	track, err := p.GetTrack(ctx, trackId)
+	_, err := p.GetTrack(ctx, trackId)
 	if err != nil {
 		return provider.Lyrics{}, err
 	}
-	return provider.Lyrics{Text: track.AlbumTitle}, nil
+	return provider.Lyrics{}, provider.ErrNotSupported
 }
 
 func (p *Provider) GetArtwork(ctx context.Context, ref string, sizePx int) (provider.Artwork, error) {

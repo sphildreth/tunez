@@ -66,7 +66,19 @@ func (p *Provider) Initialize(ctx context.Context, profileCfg any) error {
 	if err := p.ensureSchema(ctx); err != nil {
 		return err
 	}
-	if cfg.ScanOnInit {
+	shouldScan := cfg.ScanOnInit
+	if !shouldScan {
+		// Check if DB is empty
+		var count int
+		if err := p.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM tracks").Scan(&count); err != nil {
+			// If error, assume empty or broken, safe to try scan
+			shouldScan = true
+		} else if count == 0 {
+			shouldScan = true
+		}
+	}
+
+	if shouldScan {
 		if err := p.scan(ctx); err != nil {
 			return err
 		}
@@ -75,7 +87,7 @@ func (p *Provider) Initialize(ctx context.Context, profileCfg any) error {
 }
 
 func parseConfig(raw map[string]any) (Config, error) {
-	cfg := Config{PageSize: 100, ScanOnInit: true}
+	cfg := Config{PageSize: 100, ScanOnInit: false}
 	if v, ok := raw["roots"].([]any); ok {
 		for _, r := range v {
 			if s, ok := r.(string); ok {
@@ -373,7 +385,7 @@ func (p *Provider) Search(ctx context.Context, q string, req provider.ListReq) (
 	}
 	targetType, offset := parseCursor(req.Cursor)
 	pattern := "%" + strings.ToLower(q) + "%"
-	
+
 	var res provider.SearchResults
 
 	// Search Tracks
