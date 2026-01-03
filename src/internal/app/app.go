@@ -115,6 +115,8 @@ type Model struct {
 	muted           bool
 	profileSettings any
 	noEmoji         bool
+	healthOK        bool
+	healthDetails   string
 }
 
 type searchFilter int
@@ -151,6 +153,8 @@ func New(cfg *config.Config, prov provider.Provider, factory ProviderFactory, pl
 		profileSettings: settings,
 		noEmoji:         cfg.UI.NoEmoji,
 		volume:          float64(cfg.Player.InitialVolume),
+		healthOK:        true,
+		healthDetails:   "OK",
 	}
 }
 
@@ -158,8 +162,22 @@ type initMsg struct {
 	err error
 }
 
+type healthMsg struct {
+	ok      bool
+	details string
+}
+
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.initProviderCmd(), m.watchPlayerCmd())
+	return tea.Batch(m.initProviderCmd(), m.watchPlayerCmd(), m.healthCheckCmd())
+}
+
+func (m Model) healthCheckCmd() tea.Cmd {
+	return tea.Tick(30*time.Second, func(t time.Time) tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		ok, details := m.provider.Health(ctx)
+		return healthMsg{ok: ok, details: details}
+	})
 }
 
 func (m Model) initProviderCmd() tea.Cmd {
@@ -306,6 +324,19 @@ func (m Model) switchProfileCmd(profile config.Profile) tea.Cmd {
 	}
 }
 
+// matchKey returns true if the key matches the binding.
+// Handles both single keys and aliases (e.g., "space" matches " ").
+func matchKey(key, binding string) bool {
+	if key == binding {
+		return true
+	}
+	// Handle special cases
+	if binding == "space" && key == " " {
+		return true
+	}
+	return false
+}
+
 type clearErrorMsg struct{}
 
 func (m Model) clearErrorCmd() tea.Cmd {
@@ -366,6 +397,10 @@ func (m Model) selectedTrack() (provider.Track, bool) {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case healthMsg:
+		m.healthOK = msg.ok
+		m.healthDetails = msg.details
+		return m, m.healthCheckCmd() // Schedule next check
 	case seekMsg:
 		if msg.err != nil {
 			return m.setError(msg.err)
@@ -390,7 +425,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.playlists = nil
 		m.searchResults = provider.SearchResults{}
 		m.status = "Profile switched"
-		return m, tea.Batch(m.initProviderCmd(), m.watchPlayerCmd())
+		m.healthOK = true
+		m.healthDetails = "OK"
+		return m, tea.Batch(m.initProviderCmd(), m.watchPlayerCmd(), m.healthCheckCmd())
 	case clearErrorMsg:
 		m.errorMsg = ""
 		return m, nil
@@ -402,13 +439,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "Ready"
 		}
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c":
+		key := msg.String()
+
+		// Handle configurable keybindings first (player controls)
+		if matchKey(key, m.cfg.Keybindings.Quit) {
 			return m, tea.Quit
-		case "?":
+		}
+		if matchKey(key, m.cfg.Keybindings.Help) {
 			m.showHelp = !m.showHelp
 			return m, nil
-		case "m":
+		}
+		if matchKey(key, m.cfg.Keybindings.Mute) {
 			m.muted = !m.muted
 			return m, func() tea.Msg {
 				if err := m.player.SetMute(m.muted); err != nil {
@@ -416,12 +457,70 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return nil
 			}
-		case "s":
+		}
+		if matchKey(key, m.cfg.Keybindings.Shuffle) {
 			m.queue.ToggleShuffle()
 			return m, nil
-		case "r":
+		}
+		if matchKey(key, m.cfg.Keybindings.Repeat) {
 			m.queue.CycleRepeat()
 			return m, nil
+		}
+		if matchKey(key, m.cfg.Keybindings.PlayPause) {
+			m.paused = !m.paused
+			return m, func() tea.Msg {
+				if err := m.player.TogglePause(m.paused); err != nil {
+					return playerMsg{Err: err}
+				}
+				return nil
+			}
+		}
+		if matchKey(key, m.cfg.Keybindings.NextTrack) {
+			if t, err := m.queue.Next(); err == nil {
+				return m, m.playTrackCmd(t)
+			}
+			return m, nil
+		}
+		if matchKey(key, m.cfg.Keybindings.PrevTrack) {
+			if t, err := m.queue.Prev(); err == nil {
+				return m, m.playTrackCmd(t)
+			}
+			return m, nil
+		}
+		if matchKey(key, m.cfg.Keybindings.VolumeDown) {
+			m.volume -= float64(m.cfg.Player.VolumeStep)
+			if m.volume < 0 {
+				m.volume = 0
+			}
+			return m, func() tea.Msg {
+				if err := m.player.SetVolume(m.volume); err != nil {
+					return playerMsg{Err: err}
+				}
+				return nil
+			}
+		}
+		if matchKey(key, m.cfg.Keybindings.VolumeUp) || key == "=" {
+			m.volume += float64(m.cfg.Player.VolumeStep)
+			if m.volume > 100 {
+				m.volume = 100
+			}
+			return m, func() tea.Msg {
+				if err := m.player.SetVolume(m.volume); err != nil {
+					return playerMsg{Err: err}
+				}
+				return nil
+			}
+		}
+		if matchKey(key, m.cfg.Keybindings.Search) {
+			m.screen = screenSearch
+			m.searchQ = ""
+			m.searchResults = provider.SearchResults{}
+			m.status = "Enter search query"
+			return m, nil
+		}
+
+		// Non-configurable keys use switch
+		switch key {
 		case "H":
 			return m, m.seekCmd(float64(-m.cfg.Player.SeekLarge))
 		case "L":
@@ -526,12 +625,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.handleEnter()
 			}
 			return m, m.seekCmd(float64(m.cfg.Player.SeekSmall))
-		case "/":
-			m.screen = screenSearch
-			m.searchQ = ""
-			m.searchResults = provider.SearchResults{}
-			m.status = "Enter search query"
-			return m, nil
 		case "f":
 			if m.screen == screenSearch {
 				m.searchFilter = (m.searchFilter + 1) % 3
@@ -540,14 +633,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			return m.handleEnter()
-		case " ":
-			m.paused = !m.paused
-			return m, tea.Batch(func() tea.Msg {
-				if err := m.player.TogglePause(m.paused); err != nil {
-					return playerMsg{Err: err}
-				}
-				return nil
-			})
 		case "x":
 			if m.screen == screenQueue {
 				if err := m.queue.Remove(m.selection); err == nil {
@@ -604,40 +689,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selection = 0
 				return m, nil
 			}
-		case "n":
-			if t, err := m.queue.Next(); err == nil {
-				return m, m.playTrackCmd(t)
-			}
-		case "p":
-			if t, err := m.queue.Prev(); err == nil {
-				return m, m.playTrackCmd(t)
-			}
-
-		case "-":
-			m.volume -= float64(m.cfg.Player.VolumeStep)
-			if m.volume < 0 {
-				m.volume = 0
-			}
-			return m, func() tea.Msg {
-				if err := m.player.SetVolume(m.volume); err != nil {
-					return playerMsg{Err: err}
-				}
-				return nil
-			}
-		case "+", "=":
-			m.volume += float64(m.cfg.Player.VolumeStep)
-			if m.volume > 100 {
-				m.volume = 100
-			}
-			return m, func() tea.Msg {
-				if err := m.player.SetVolume(m.volume); err != nil {
-					return playerMsg{Err: err}
-				}
-				return nil
-			}
 		default:
-			if m.screen == screenSearch && len(msg.String()) == 1 && msg.Runes != nil {
-				m.searchQ += msg.String()
+			if m.screen == screenSearch && len(key) == 1 && msg.Runes != nil {
+				m.searchQ += key
 				return m, m.searchCmd(m.searchQ)
 			}
 		}
@@ -918,12 +972,21 @@ func (m Model) renderTopBar(width int) string {
 	profile, _ := m.cfg.ProfileByID(m.cfg.ActiveProfile)
 	providerInfo := fmt.Sprintf("Provider: %s (%s)", profile.Provider, profile.Name)
 
-	// Health status
-	healthIcon := "●"
-	if m.noEmoji {
-		healthIcon = "[OK]"
+	// Health status - use actual health check result
+	var health string
+	if m.healthOK {
+		if m.noEmoji {
+			health = m.theme.Success.Render("[OK]")
+		} else {
+			health = m.theme.Success.Render("● OK")
+		}
+	} else {
+		if m.noEmoji {
+			health = m.theme.Error.Render("[ERR]")
+		} else {
+			health = m.theme.Error.Render("● " + m.healthDetails)
+		}
 	}
-	health := m.theme.Success.Render(healthIcon + " OK")
 
 	// Queue count
 	queueInfo := fmt.Sprintf("Queue: %d", m.queue.Len())

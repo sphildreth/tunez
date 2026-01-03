@@ -538,7 +538,7 @@ Reference layout (ASCII):
 
 **Requirement**
 - Help MUST reflect the current keybinding map from config (not hard-coded) when possible.
-- MVP: may ship with defaults hard-coded *only if* config keybind parsing is not yet implemented; document this in `docs/DECISIONS.md`.
+- MVP: ships with player control keybindings from config; navigation keys (j/k/tab) are standard and hard-coded.
 
 **Controls**
 - `?` toggles overlay
