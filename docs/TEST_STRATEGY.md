@@ -18,6 +18,12 @@ Single suite run against each Provider:
 - Filesystem provider on fixture library
 - Melodee provider using mocked HTTP (recorded fixtures)
 
+## Melodee API Development Environment
+For development and testing of the Melodee API Provider, use a mock server or staging environment rather than production APIs. Options include:
+- Recorded HTTP fixtures (see integration tests above)
+- Local mock server implementing the Melodee API contract
+- Dedicated staging/dev instance of Melodee server
+
 ## Fake mpv
 A fake IPC server for deterministic player tests:
 - Accept `command`

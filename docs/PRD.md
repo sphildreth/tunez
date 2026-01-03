@@ -67,7 +67,7 @@ Tunez uses **mpv** as the playback engine. Tunez controls mpv via **JSON IPC** (
 
 **MUST (Phase 1 built-ins)**
 - Filesystem Provider (see `docs/PROVIDER_FILESYSTEM.md`): MUST persist index (e.g. SQLite) to disk for fast startup.
-- Melodee API Provider (see `docs/PROVIDER_MELODEE_API.md`): SHOULD utilize a mock/staging env for development.
+- Melodee API Provider (see `docs/PROVIDER_MELODEE_API.md`)
 
 ### 4.2 Library browsing
 Tunez MUST provide these browse views (capability-gated where appropriate):
@@ -91,9 +91,9 @@ Tunez uses mpv for playback.
 
 **MUST**
 - Play/pause toggle
-- Seek forward/back
+- Seek forward/back (default: 10s; configurable)
 - Next/previous track (in queue)
-- Volume up/down + mute
+- Volume up/down + mute (range: 0–100%; no boost beyond 100%)
 - Shuffle + repeat modes (at least: off / all / one)
 - Display elapsed and remaining time and a progress bar
 
@@ -118,12 +118,11 @@ Tunez MUST provide:
 - Library (artists/albums/tracks)
 - Queue
 - Playlists (capability-gated)
-- Lyrics (capability-gated)
+- Lyrics (capability-gated; placeholder/disabled in MVP, functional in v1)
 - Configuration (main + profiles; view-only in MVP)
 - Help / keybindings overlay
 - Error toast + error modal
 - CLI “play then launch TUI” flow (optional for MVP; planned)
-- `tunez version` CLI command
 
 See `docs/TUI_UX.md` for the full screen specification.
 
@@ -145,6 +144,7 @@ See `docs/TUI_UX.md` for the full screen specification.
 - Theme selection MUST be configurable (e.g., `ui.theme`), with the colorful theme as the default when unset.
 
 **SHOULD**
+- A `tunez version` command that prints version info.
 - A `tunez config init` command that writes an example config.
 - A `tunez doctor` command that checks mpv availability and provider connectivity.
 
@@ -180,6 +180,7 @@ MVP is accepted when all items below are true:
 4. **TUI is complete**: Now Playing, Library, Search, Queue, Help overlay.
 5. **Config works**: load + validate config; switch profiles; keybindings apply.
 6. **No UI blocking**: long provider requests show loading state and remain cancellable.
+7. **Accessibility works**: `NO_COLOR=1` disables rainbow theme and applies a high-contrast fallback.
 
 ## 7. Roadmap (Post-MVP)
 - Offline cache/download (provider-gated)
