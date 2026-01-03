@@ -4,13 +4,13 @@ active_profile = "home-files"
 [ui]
 page_size = 100
 no_emoji = false
-theme = "rainbow"          # rainbow (default) | mono (v1+) | green (v1+) | ...
+theme = "rainbow"
 
 [player]
 mpv_path = "mpv"
-ipc = "auto"              # auto | unix | pipe
+ipc = "auto"
 initial_volume = 70
-cache_secs = 30            # mpv cache-secs
+cache_secs = 30
 network_timeout_ms = 8000
 
 [[profiles]]
@@ -32,19 +32,7 @@ enabled = true
 
 [profiles.settings]
 base_url = "https://music.example.com"
-username = "steven"
+username = "user@example.com"
 password_env = "TUNEZ_MELODEE_PASSWORD"
 page_size = 200
 cache_db = "melodee_cache.sqlite"
-
-[keybindings]
-"app.quit" = ["ctrl+c"]
-"app.help" = ["?"]
-"nav.search" = ["/"]
-"player.play_pause" = ["space"]
-"player.next" = ["n"]
-"player.prev" = ["p"]
-"player.seek_forward_small" = ["l"]
-"player.seek_back_small" = ["h"]
-"player.volume_up" = ["+"]
-"player.volume_down" = ["-"]

@@ -1,0 +1,222 @@
+package config
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"time"
+
+	"github.com/pelletier/go-toml/v2"
+)
+
+// Config holds Tunez runtime configuration loaded from TOML.
+type Config struct {
+	ConfigVersion int          `toml:"config_version"`
+	ActiveProfile string       `toml:"active_profile"`
+	UI            UIConfig     `toml:"ui"`
+	Player        PlayerConfig `toml:"player"`
+	Profiles      []Profile    `toml:"profiles"`
+}
+
+type UIConfig struct {
+	PageSize int    `toml:"page_size"`
+	NoEmoji  bool   `toml:"no_emoji"`
+	Theme    string `toml:"theme"`
+}
+
+type PlayerConfig struct {
+	MPVPath         string `toml:"mpv_path"`
+	IPC             string `toml:"ipc"`
+	InitialVolume   int    `toml:"initial_volume"`
+	CacheSeconds    int    `toml:"cache_secs"`
+	NetworkTimeout  int    `toml:"network_timeout_ms"`
+	SeekSmall       int    `toml:"seek_small_seconds"`
+	SeekLarge       int    `toml:"seek_large_seconds"`
+	VolumeStep      int    `toml:"volume_step"`
+	EnableAutostart bool   `toml:"autostart"`
+}
+
+type Profile struct {
+	ID       string         `toml:"id"`
+	Name     string         `toml:"name"`
+	Provider string         `toml:"provider"`
+	Enabled  bool           `toml:"enabled"`
+	Settings map[string]any `toml:"settings"`
+}
+
+// Load reads configuration from disk. If path is empty, a default OS-specific
+// location is used.
+func Load(path string) (*Config, string, error) {
+	cfgPath := path
+	if cfgPath == "" {
+		var err error
+		cfgPath, err = defaultPath()
+		if err != nil {
+			return nil, "", fmt.Errorf("resolve config path: %w", err)
+		}
+	}
+
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return nil, cfgPath, fmt.Errorf("read config: %w", err)
+	}
+
+	var cfg Config
+	if err := toml.Unmarshal(data, &cfg); err != nil {
+		return nil, cfgPath, fmt.Errorf("parse config: %w", err)
+	}
+
+	applyDefaults(&cfg)
+
+	if err := Validate(cfg); err != nil {
+		return nil, cfgPath, err
+	}
+
+	return &cfg, cfgPath, nil
+}
+
+func defaultPath() (string, error) {
+	var base string
+	switch runtime.GOOS {
+	case "darwin":
+		dir, err := os.UserConfigDir()
+		if err != nil {
+			return "", err
+		}
+		base = filepath.Join(dir, "tunez")
+	case "windows":
+		dir, err := os.UserConfigDir()
+		if err != nil {
+			return "", err
+		}
+		base = filepath.Join(dir, "Tunez")
+	default:
+		dir, err := os.UserConfigDir()
+		if err != nil {
+			return "", err
+		}
+		base = filepath.Join(dir, "tunez")
+	}
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "config.toml"), nil
+}
+
+func applyDefaults(cfg *Config) {
+	if cfg.UI.PageSize == 0 {
+		cfg.UI.PageSize = 100
+	}
+	if cfg.UI.Theme == "" {
+		cfg.UI.Theme = "rainbow"
+	}
+	if cfg.Player.MPVPath == "" {
+		cfg.Player.MPVPath = "mpv"
+	}
+	if cfg.Player.InitialVolume == 0 {
+		cfg.Player.InitialVolume = 70
+	}
+	if cfg.Player.SeekSmall == 0 {
+		cfg.Player.SeekSmall = 5
+	}
+	if cfg.Player.SeekLarge == 0 {
+		cfg.Player.SeekLarge = 30
+	}
+	if cfg.Player.VolumeStep == 0 {
+		cfg.Player.VolumeStep = 5
+	}
+	if cfg.Player.NetworkTimeout == 0 {
+		cfg.Player.NetworkTimeout = 8000
+	}
+}
+
+// Validate performs semantic validation of config according to docs/CONFIG.md.
+func Validate(cfg Config) error {
+	if cfg.ActiveProfile == "" {
+		return errors.New("active_profile is required")
+	}
+	profile, ok := cfg.ProfileByID(cfg.ActiveProfile)
+	if !ok {
+		return fmt.Errorf("active_profile %q not found", cfg.ActiveProfile)
+	}
+	if !profile.Enabled {
+		return fmt.Errorf("active_profile %q is disabled", cfg.ActiveProfile)
+	}
+	if cfg.Player.InitialVolume < 0 || cfg.Player.InitialVolume > 100 {
+		return fmt.Errorf("player.initial_volume must be 0-100")
+	}
+	if _, err := os.Stat(cfg.Player.MPVPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			if _, lookErr := execLookPath(cfg.Player.MPVPath); lookErr != nil {
+				return fmt.Errorf("mpv not found (%s): %w", cfg.Player.MPVPath, lookErr)
+			}
+		}
+	}
+
+	switch profile.Provider {
+	case "filesystem":
+		if err := validateFilesystem(profile.Settings); err != nil {
+			return err
+		}
+	case "melodee":
+		if err := validateMelodee(profile.Settings); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unknown provider: %s", profile.Provider)
+	}
+	return nil
+}
+
+func validateFilesystem(settings map[string]any) error {
+	roots, ok := settings["roots"].([]any)
+	if !ok || len(roots) == 0 {
+		return errors.New("filesystem.roots is required")
+	}
+	for _, r := range roots {
+		s, _ := r.(string)
+		if s == "" {
+			return errors.New("filesystem.roots contains empty path")
+		}
+		if _, err := os.Stat(s); err != nil {
+			return fmt.Errorf("filesystem root %s: %w", s, err)
+		}
+	}
+	return nil
+}
+
+func validateMelodee(settings map[string]any) error {
+	baseURL, _ := settings["base_url"].(string)
+	if baseURL == "" {
+		return errors.New("melodee.base_url is required")
+	}
+	return nil
+}
+
+// ProfileByID returns profile and true when found.
+func (c Config) ProfileByID(id string) (Profile, bool) {
+	for _, p := range c.Profiles {
+		if p.ID == id {
+			return p, true
+		}
+	}
+	return Profile{}, false
+}
+
+// DeadlineContext returns a context with default timeout based on player network timeout.
+func (c Config) DeadlineContext() (context.Context, context.CancelFunc) {
+	d := time.Duration(c.Player.NetworkTimeout) * time.Millisecond
+	if d == 0 {
+		d = 8 * time.Second
+	}
+	return context.WithTimeout(context.Background(), d)
+}
+
+// execLookPath is a test seam.
+var execLookPath = func(file string) (string, error) {
+	return exec.LookPath(file)
+}
