@@ -41,6 +41,8 @@ Options:
         Path to config file (default: ~/.config/tunez/config.toml)
   -version
         Print version and exit
+  -config-init
+        Create example config file
 
 Diagnostics:
   -doctor
@@ -60,6 +62,7 @@ Playback:
 
 Examples:
   tunez                                    # Start interactive TUI
+  tunez --config-init                      # Create example config
   tunez --doctor                           # Check setup
   tunez --scan                             # Rescan music library
   tunez --random --play                    # Play random tracks
@@ -73,6 +76,7 @@ Examples:
 	doctor := flag.Bool("doctor", false, "")
 	scan := flag.Bool("scan", false, "")
 	showVersion := flag.Bool("version", false, "")
+	configInit := flag.Bool("config-init", false, "")
 	searchArtist := flag.String("artist", "", "")
 	searchAlbum := flag.String("album", "", "")
 	autoPlay := flag.Bool("play", false, "")
@@ -81,6 +85,11 @@ Examples:
 
 	if *showVersion {
 		fmt.Println("tunez", version)
+		return
+	}
+
+	if *configInit {
+		runConfigInit()
 		return
 	}
 
@@ -374,6 +383,121 @@ func printCheck(name, status string, ok bool, detail string) {
 	} else {
 		fmt.Printf("  %s %-15s %s\n", icon, name+":", status)
 	}
+}
+
+func runConfigInit() {
+	configDir, err := os.UserConfigDir()
+	if err != nil {
+		fmt.Printf("Error: cannot determine config directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	tunezDir := filepath.Join(configDir, "tunez")
+	configPath := filepath.Join(tunezDir, "config.toml")
+
+	// Check if config already exists
+	if _, err := os.Stat(configPath); err == nil {
+		fmt.Printf("Config file already exists: %s\n", configPath)
+		fmt.Println("Remove the existing file first if you want to regenerate it.")
+		os.Exit(1)
+	}
+
+	// Create directory if needed
+	if err := os.MkdirAll(tunezDir, 0755); err != nil {
+		fmt.Printf("Error: cannot create config directory: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Example config content
+	exampleConfig := `# Tunez Configuration
+# See docs/CONFIG.md for full reference
+
+config_version = 1
+active_profile = "local"
+
+[ui]
+theme = "rainbow"     # rainbow, mono, green, dracula, nord, synthwave, etc.
+page_size = 100
+no_emoji = false
+
+[player]
+mpv_path = "mpv"
+initial_volume = 70
+seek_small_seconds = 5
+seek_large_seconds = 30
+volume_step = 5
+
+[queue]
+persist = true        # Remember queue across restarts
+
+[artwork]
+enabled = true
+width = 40
+cache_days = 30
+
+[scrobble]
+enabled = false       # Set to true and configure scrobblers below
+
+# Uncomment to enable Last.fm scrobbling:
+# [[scrobblers]]
+# id = "lastfm"
+# type = "lastfm"
+# enabled = true
+# [scrobblers.settings]
+# api_key = "YOUR_API_KEY"
+# api_secret = "YOUR_API_SECRET"
+# session_key = "YOUR_SESSION_KEY"
+
+[keybindings]
+play_pause = "space"
+next_track = "n"
+prev_track = "p"
+seek_forward = "l"
+seek_backward = "h"
+volume_up = "+"
+volume_down = "-"
+mute = "m"
+shuffle = "s"
+repeat = "r"
+search = "/"
+help = "?"
+quit = "q,ctrl+c"
+
+# Local filesystem profile
+[[profiles]]
+id = "local"
+name = "My Music"
+provider = "filesystem"
+enabled = true
+
+[profiles.settings]
+roots = ["/home/` + os.Getenv("USER") + `/Music"]
+scan_on_start = false
+
+# Melodee API profile (uncomment to enable)
+# [[profiles]]
+# id = "melodee"
+# name = "Melodee Server"
+# provider = "melodee"
+# enabled = true
+#
+# [profiles.settings]
+# base_url = "https://music.example.com"
+# username = "your-username"
+# password_env = "TUNEZ_MELODEE_PASSWORD"
+`
+
+	if err := os.WriteFile(configPath, []byte(exampleConfig), 0644); err != nil {
+		fmt.Printf("Error: cannot write config file: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("✓ Created config file: %s\n", configPath)
+	fmt.Println()
+	fmt.Println("Next steps:")
+	fmt.Println("  1. Edit the config file to set your music library path")
+	fmt.Println("  2. Run 'tunez --scan' to index your library")
+	fmt.Println("  3. Run 'tunez' to start playing!")
 }
 
 func runScan(cfg *config.Config, logger *slog.Logger) {

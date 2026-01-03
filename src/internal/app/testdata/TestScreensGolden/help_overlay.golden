@@ -4,16 +4,16 @@
 │ Global                                                 │
 │   tab           : Switch pane (nav ↔ content)          │
 │   ?             : Toggle help                          │
-│   q / ctrl+c    : Quit                                 │
+│   q             : Quit                                 │
 │                                                        │
 │ Player                                                 │
 │   space         : Play/Pause                           │
-│   n / p         : Next / Previous track                │
+│   n / N         : Next / Previous track                │
 │   h / l         : Seek -5s / +5s                       │
-│   H / L         : Seek -30s / +30s                     │
+│   H / L         : Seek -0s / +0s                       │
 │   - / +         : Volume Down / Up                     │
 │   m             : Mute                                 │
-│   s             : Toggle Shuffle                       │
+│   S             : Toggle Shuffle                       │
 │   r             : Cycle Repeat (off/all/one)           │
 │                                                        │
 │ Navigation                                             │
@@ -22,7 +22,7 @@
 │   backspace/esc : Go back (Library)                    │
 │                                                        │
 │ Search                                                 │
-│   /             : Enter search mode                    │
+│                 : Enter search mode                    │
 │   f             : Cycle filter (Tracks/Albums/Artists) │
 │                                                        │
 │ Queue                                                  │

@@ -169,6 +169,11 @@ type Model struct {
 
 	// Visualizer state (Phase 2)
 	visualizer *visualizer.Visualizer
+
+	// Command palette state (Phase 3)
+	showPalette     bool
+	paletteState    *PaletteState
+	commandRegistry *CommandRegistry
 }
 
 type searchFilter int
@@ -206,7 +211,7 @@ func New(cfg *config.Config, prov provider.Provider, factory ProviderFactory, pl
 		})
 	}
 
-	return Model{
+	m := Model{
 		cfg:             cfg,
 		provider:        prov,
 		factory:         factory,
@@ -227,6 +232,12 @@ func New(cfg *config.Config, prov provider.Provider, factory ProviderFactory, pl
 		startupOpts:     opts,
 		visualizer:      viz,
 	}
+
+	// Initialize command palette (Phase 3)
+	m.commandRegistry = NewCommandRegistry(&m)
+	m.paletteState = NewPaletteState(m.commandRegistry)
+
+	return m
 }
 
 type initMsg struct {
@@ -804,6 +815,55 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyMsg:
 		key := msg.String()
+
+		// Handle command palette input when visible
+		if m.showPalette {
+			switch key {
+			case "esc":
+				m.showPalette = false
+				m.paletteState.Reset()
+				return m, nil
+			case "enter":
+				if cmd := m.paletteState.SelectedCommand(); cmd != nil {
+					m.showPalette = false
+					m.paletteState.Reset()
+					newModel, cmd := cmd.Handler(&m)
+					return newModel, cmd
+				}
+				return m, nil
+			case "up":
+				m.paletteState.SelectUp()
+				return m, nil
+			case "down":
+				m.paletteState.SelectDown()
+				return m, nil
+			case "backspace":
+				m.paletteState.Backspace()
+				return m, nil
+			case "delete":
+				m.paletteState.Delete()
+				return m, nil
+			case "left":
+				m.paletteState.CursorLeft()
+				return m, nil
+			case "right":
+				m.paletteState.CursorRight()
+				return m, nil
+			default:
+				// Insert printable characters
+				if len(key) == 1 && key[0] >= 32 && key[0] <= 126 {
+					m.paletteState.InsertChar(rune(key[0]))
+				}
+				return m, nil
+			}
+		}
+
+		// Open command palette with : or ctrl+p
+		if key == ":" || key == "ctrl+p" {
+			m.showPalette = true
+			m.paletteState.Reset()
+			return m, nil
+		}
 
 		// ESC closes help overlay or goes back
 		if key == "esc" {
@@ -1547,6 +1607,9 @@ func (m Model) View() string {
 	}
 	if m.showHelp {
 		return m.renderHelpOverlay()
+	}
+	if m.showPalette {
+		return m.paletteState.Render(&m)
 	}
 
 	// Calculate dimensions
@@ -2445,21 +2508,24 @@ func (m Model) renderConfig() string {
 }
 
 func (m Model) renderHelpOverlay() string {
+	// Use configured keybindings instead of hardcoded values
+	kb := m.cfg.Keybindings
+
 	lines := []string{
 		m.theme.Accent.Render("Global"),
-		"  tab           : Switch pane (nav ↔ content)",
-		"  ?             : Toggle help",
-		"  q / ctrl+c    : Quit",
+		fmt.Sprintf("  %-13s : Switch pane (nav ↔ content)", "tab"),
+		fmt.Sprintf("  %-13s : Toggle help", kb.Help),
+		fmt.Sprintf("  %-13s : Quit", kb.Quit),
 		"",
 		m.theme.Accent.Render("Player"),
-		"  space         : Play/Pause",
-		"  n / p         : Next / Previous track",
-		"  h / l         : Seek -5s / +5s",
-		"  H / L         : Seek -30s / +30s",
-		"  - / +         : Volume Down / Up",
-		"  m             : Mute",
-		"  s             : Toggle Shuffle",
-		"  r             : Cycle Repeat (off/all/one)",
+		fmt.Sprintf("  %-13s : Play/Pause", kb.PlayPause),
+		fmt.Sprintf("  %-13s : Next / Previous track", kb.NextTrack+" / "+kb.PrevTrack),
+		fmt.Sprintf("  %-13s : Seek -%ds / +%ds", kb.SeekBackward+" / "+kb.SeekForward, m.cfg.Player.SeekSmall, m.cfg.Player.SeekSmall),
+		fmt.Sprintf("  %-13s : Seek -%ds / +%ds", "H / L", m.cfg.Player.SeekLarge, m.cfg.Player.SeekLarge),
+		fmt.Sprintf("  %-13s : Volume Down / Up", kb.VolumeDown+" / "+kb.VolumeUp),
+		fmt.Sprintf("  %-13s : Mute", kb.Mute),
+		fmt.Sprintf("  %-13s : Toggle Shuffle", kb.Shuffle),
+		fmt.Sprintf("  %-13s : Cycle Repeat (off/all/one)", kb.Repeat),
 		"",
 		m.theme.Accent.Render("Navigation"),
 		"  ↑/↓ or j/k    : Move up/down (context-aware)",
@@ -2467,7 +2533,7 @@ func (m Model) renderHelpOverlay() string {
 		"  backspace/esc : Go back (Library)",
 		"",
 		m.theme.Accent.Render("Search"),
-		"  /             : Enter search mode",
+		fmt.Sprintf("  %-13s : Enter search mode", kb.Search),
 		"  f             : Cycle filter (Tracks/Albums/Artists)",
 		"",
 		m.theme.Accent.Render("Queue"),
