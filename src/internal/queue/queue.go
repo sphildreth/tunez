@@ -2,14 +2,27 @@ package queue
 
 import (
 	"errors"
+	"math/rand"
+	"time"
 
 	"github.com/tunez/tunez/internal/provider"
 )
 
+type RepeatMode int
+
+const (
+	RepeatOff RepeatMode = iota
+	RepeatAll
+	RepeatOne
+)
+
 // Queue maintains an ordered list of tracks and the current position.
 type Queue struct {
-	items   []provider.Track
-	current int
+	items      []provider.Track
+	current    int
+	repeatMode RepeatMode
+	shuffled   bool
+	original   []provider.Track
 }
 
 var ErrEmpty = errors.New("queue is empty")
@@ -31,6 +44,10 @@ func (q *Queue) Current() (provider.Track, error) {
 		return provider.Track{}, ErrEmpty
 	}
 	return q.items[q.current], nil
+}
+
+func (q *Queue) CurrentIndex() int {
+	return q.current
 }
 
 func (q *Queue) Add(tracks ...provider.Track) {
@@ -91,14 +108,105 @@ func (q *Queue) Move(from, to int) error {
 	return nil
 }
 
+func (q *Queue) ToggleShuffle() {
+	q.shuffled = !q.shuffled
+	if q.shuffled {
+		// Save original order
+		q.original = make([]provider.Track, len(q.items))
+		copy(q.original, q.items)
+		
+		// Shuffle items, but keep current playing item at current index if possible
+		// Actually, usually we shuffle everything except current?
+		// Or just shuffle everything.
+		// If we shuffle, current index points to a different track unless we find it.
+		currentTrack := provider.Track{}
+		if q.current >= 0 && q.current < len(q.items) {
+			currentTrack = q.items[q.current]
+		}
+		
+		rand.Seed(time.Now().UnixNano())
+		rand.Shuffle(len(q.items), func(i, j int) {
+			q.items[i], q.items[j] = q.items[j], q.items[i]
+		})
+		
+		// Find current track and update index
+		if currentTrack.ID != "" {
+			for i, t := range q.items {
+				if t.ID == currentTrack.ID {
+					q.current = i
+					break
+				}
+			}
+		}
+	} else {
+		// Restore original order
+		if q.original != nil {
+			// We need to find where current track is in original
+			currentTrack := provider.Track{}
+			if q.current >= 0 && q.current < len(q.items) {
+				currentTrack = q.items[q.current]
+			}
+			
+			q.items = q.original
+			q.original = nil
+			
+			if currentTrack.ID != "" {
+				for i, t := range q.items {
+					if t.ID == currentTrack.ID {
+						q.current = i
+						break
+					}
+				}
+			}
+		}
+	}
+}
+
+func (q *Queue) CycleRepeat() RepeatMode {
+	q.repeatMode = (q.repeatMode + 1) % 3
+	return q.repeatMode
+}
+
+func (q *Queue) RepeatMode() RepeatMode {
+	return q.repeatMode
+}
+
+func (q *Queue) IsShuffled() bool {
+	return q.shuffled
+}
+
 func (q *Queue) Next() (provider.Track, error) {
 	if len(q.items) == 0 {
 		return provider.Track{}, ErrEmpty
 	}
+	
+	if q.repeatMode == RepeatOne {
+		if q.current == -1 {
+			q.current = 0
+		}
+		return q.items[q.current], nil
+	}
+	
 	if q.current < len(q.items)-1 {
 		q.current++
+	} else if q.repeatMode == RepeatAll {
+		q.current = 0
+	} else {
+		// End of queue
+		return provider.Track{}, errors.New("end of queue")
 	}
 	return q.items[q.current], nil
+}
+
+func (q *Queue) PeekNext() (provider.Track, error) {
+	if len(q.items) == 0 {
+		return provider.Track{}, ErrEmpty
+	}
+	nextIdx := q.current + 1
+	if nextIdx >= len(q.items) {
+		return provider.Track{}, errors.New("no next track")
+	}
+	return q.items[nextIdx], nil
 }
 
 func (q *Queue) Prev() (provider.Track, error) {

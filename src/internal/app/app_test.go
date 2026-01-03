@@ -76,7 +76,9 @@ func TestNavigation(t *testing.T) {
 	// Mock player that doesn't start process
 	pl := player.New(player.Options{DisableProcess: true})
 
-	m := New(cfg, prov, pl, nil)
+	m := New(cfg, prov, func(p config.Profile) (provider.Provider, error) {
+		return prov, nil
+	}, pl, nil)
 
 	// 1. Initial State
 	if m.screen != screenLoading {
@@ -95,9 +97,12 @@ func TestNavigation(t *testing.T) {
 
 	// 3. Simulate Artist Load (which is part of Init chain usually)
 	m, _ = updateModel(m, artistsMsg{page: provider.Page[provider.Artist]{Items: prov.artists}})
-	if m.screen != screenLibrary {
-		t.Errorf("expected Library screen, got %d", m.screen)
+	if m.screen != screenNowPlaying {
+		t.Errorf("expected NowPlaying screen, got %d", m.screen)
 	}
+
+	// Switch to Library screen for testing navigation
+	m.screen = screenLibrary
 	if len(m.artists) != 1 {
 		t.Errorf("expected 1 artist, got %d", len(m.artists))
 	}
@@ -112,7 +117,7 @@ func TestNavigation(t *testing.T) {
 	if len(m.albums) != 1 {
 		t.Errorf("expected 1 album, got %d", len(m.albums))
 	}
-	if m.status != "Albums loaded" {
+	if m.status != "Albums loaded (1)" {
 		t.Errorf("expected Albums status, got %s", m.status)
 	}
 

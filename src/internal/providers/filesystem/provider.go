@@ -227,7 +227,7 @@ func (p *Provider) listArtists(ctx context.Context, req provider.ListReq) (provi
 	if pageSize == 0 {
 		pageSize = p.cfg.PageSize
 	}
-	offset := parseCursor(req.Cursor)
+	_, offset := parseCursor(req.Cursor)
 	rows, err := p.db.QueryContext(ctx, `SELECT id,name,sort_name FROM artists ORDER BY sort_name LIMIT ? OFFSET ?`, pageSize+1, offset)
 	if err != nil {
 		return provider.Page[provider.Artist]{}, err
@@ -266,7 +266,7 @@ func (p *Provider) ListAlbums(ctx context.Context, artistId string, req provider
 	if pageSize == 0 {
 		pageSize = p.cfg.PageSize
 	}
-	offset := parseCursor(req.Cursor)
+	_, offset := parseCursor(req.Cursor)
 	query := `SELECT id,artist_id,title,year FROM albums `
 	var args []any
 	if artistId != "" {
@@ -316,7 +316,7 @@ func (p *Provider) ListTracks(ctx context.Context, albumId string, artistId stri
 	if pageSize == 0 {
 		pageSize = p.cfg.PageSize
 	}
-	offset := parseCursor(req.Cursor)
+	_, offset := parseCursor(req.Cursor)
 	query := `SELECT id,title,artist_id,artist_name,album_id,album_title,duration_ms,track_number,disc_number,codec,bitrate FROM tracks `
 	var args []any
 	var clauses []string
@@ -371,29 +371,81 @@ func (p *Provider) Search(ctx context.Context, q string, req provider.ListReq) (
 	if pageSize == 0 {
 		pageSize = p.cfg.PageSize
 	}
-	offset := parseCursor(req.Cursor)
+	targetType, offset := parseCursor(req.Cursor)
 	pattern := "%" + strings.ToLower(q) + "%"
-	rows, err := p.db.QueryContext(ctx, `SELECT id,title,artist_id,artist_name,album_id,album_title,duration_ms,track_number,disc_number,codec,bitrate FROM tracks WHERE lower(title) LIKE ? OR lower(artist_name) LIKE ? OR lower(album_title) LIKE ? ORDER BY artist_name LIMIT ? OFFSET ?`, pattern, pattern, pattern, pageSize+1, offset)
-	if err != nil {
-		return provider.SearchResults{}, err
-	}
-	defer rows.Close()
-	var tracks []provider.Track
-	for rows.Next() {
-		var t provider.Track
-		if err := rows.Scan(&t.ID, &t.Title, &t.ArtistID, &t.ArtistName, &t.AlbumID, &t.AlbumTitle, &t.DurationMs, &t.TrackNo, &t.DiscNo, &t.Codec, &t.BitrateKbps); err != nil {
+	
+	var res provider.SearchResults
+
+	// Search Tracks
+	if targetType == "" || targetType == "tracks" {
+		rows, err := p.db.QueryContext(ctx, `SELECT id,title,artist_id,artist_name,album_id,album_title,duration_ms,track_number,disc_number,codec,bitrate FROM tracks WHERE lower(title) LIKE ? OR lower(artist_name) LIKE ? OR lower(album_title) LIKE ? ORDER BY artist_name LIMIT ? OFFSET ?`, pattern, pattern, pattern, pageSize+1, offset)
+		if err != nil {
 			return provider.SearchResults{}, err
 		}
-		tracks = append(tracks, t)
+		defer rows.Close()
+		var tracks []provider.Track
+		for rows.Next() {
+			var t provider.Track
+			if err := rows.Scan(&t.ID, &t.Title, &t.ArtistID, &t.ArtistName, &t.AlbumID, &t.AlbumTitle, &t.DurationMs, &t.TrackNo, &t.DiscNo, &t.Codec, &t.BitrateKbps); err != nil {
+				return provider.SearchResults{}, err
+			}
+			tracks = append(tracks, t)
+		}
+		next := ""
+		if len(tracks) > pageSize {
+			next = fmt.Sprintf("tracks:%d", offset+pageSize)
+			tracks = tracks[:pageSize]
+		}
+		res.Tracks = provider.Page[provider.Track]{Items: tracks, NextCursor: next, TotalHint: -1}
 	}
-	next := ""
-	if len(tracks) > pageSize {
-		next = fmt.Sprintf("%d", offset+pageSize)
-		tracks = tracks[:pageSize]
+
+	// Search Albums
+	if targetType == "" || targetType == "albums" {
+		rows, err := p.db.QueryContext(ctx, `SELECT id,artist_id,title,year FROM albums WHERE lower(title) LIKE ? ORDER BY title LIMIT ? OFFSET ?`, pattern, pageSize+1, offset)
+		if err != nil {
+			return provider.SearchResults{}, err
+		}
+		defer rows.Close()
+		var albums []provider.Album
+		for rows.Next() {
+			var a provider.Album
+			if err := rows.Scan(&a.ID, &a.ArtistID, &a.Title, &a.Year); err != nil {
+				return provider.SearchResults{}, err
+			}
+			albums = append(albums, a)
+		}
+		next := ""
+		if len(albums) > pageSize {
+			next = fmt.Sprintf("albums:%d", offset+pageSize)
+			albums = albums[:pageSize]
+		}
+		res.Albums = provider.Page[provider.Album]{Items: albums, NextCursor: next, TotalHint: -1}
 	}
-	return provider.SearchResults{
-		Tracks: provider.Page[provider.Track]{Items: tracks, NextCursor: next, TotalHint: -1},
-	}, nil
+
+	// Search Artists
+	if targetType == "" || targetType == "artists" {
+		rows, err := p.db.QueryContext(ctx, `SELECT id,name,sort_name FROM artists WHERE lower(name) LIKE ? ORDER BY sort_name LIMIT ? OFFSET ?`, pattern, pageSize+1, offset)
+		if err != nil {
+			return provider.SearchResults{}, err
+		}
+		defer rows.Close()
+		var artists []provider.Artist
+		for rows.Next() {
+			var a provider.Artist
+			if err := rows.Scan(&a.ID, &a.Name, &a.SortName); err != nil {
+				return provider.SearchResults{}, err
+			}
+			artists = append(artists, a)
+		}
+		next := ""
+		if len(artists) > pageSize {
+			next = fmt.Sprintf("artists:%d", offset+pageSize)
+			artists = artists[:pageSize]
+		}
+		res.Artists = provider.Page[provider.Artist]{Items: artists, NextCursor: next, TotalHint: -1}
+	}
+
+	return res, nil
 }
 
 func (p *Provider) ListPlaylists(ctx context.Context, req provider.ListReq) (provider.Page[provider.Playlist], error) {
@@ -428,11 +480,17 @@ func (p *Provider) GetArtwork(ctx context.Context, ref string, sizePx int) (prov
 	return provider.Artwork{}, provider.ErrNotSupported
 }
 
-func parseCursor(cur string) int {
+func parseCursor(cur string) (string, int) {
 	if cur == "" {
-		return 0
+		return "", 0
+	}
+	parts := strings.SplitN(cur, ":", 2)
+	if len(parts) == 2 {
+		var off int
+		fmt.Sscanf(parts[1], "%d", &off)
+		return parts[0], off
 	}
 	var off int
 	fmt.Sscanf(cur, "%d", &off)
-	return off
+	return "", off
 }

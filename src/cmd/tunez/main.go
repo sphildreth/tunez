@@ -63,7 +63,9 @@ func main() {
 		logger.Error("start player", slog.Any("err", err))
 		log.Fatalf("start player: %v", err)
 	}
-	model := app.New(cfg, prov, ctrl, profile.Settings)
+	model := app.New(cfg, prov, func(p config.Profile) (provider.Provider, error) {
+		return buildProvider(p)
+	}, ctrl, profile.Settings)
 	if _, err := tea.NewProgram(model, tea.WithAltScreen()).Run(); err != nil {
 		logger.Error("run tui", slog.Any("err", err))
 		log.Fatalf("tui: %v", err)

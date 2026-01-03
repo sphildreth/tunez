@@ -59,7 +59,7 @@ loop:
 			if evt.Err != nil {
 				t.Fatalf("event err: %v", evt.Err)
 			}
-			if evt.TimePos == 12.5 {
+			if evt.TimePos != nil && *evt.TimePos == 12.5 {
 				receivedPos = true
 			}
 			if evt.Ended {

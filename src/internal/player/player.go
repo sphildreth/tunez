@@ -18,10 +18,11 @@ import (
 
 // Event describes playback state updates emitted by mpv.
 type Event struct {
-	TimePos  float64
-	Duration float64
-	Paused   bool
-	Volume   float64
+	TimePos  *float64
+	Duration *float64
+	Paused   *bool
+	Volume   *float64
+	Muted    *bool
 	Ended    bool
 	Err      error
 }
@@ -128,7 +129,7 @@ func networkForPath(path string) string {
 }
 
 func (c *Controller) observeProperties() error {
-	props := []string{"time-pos", "duration", "pause", "volume"}
+	props := []string{"time-pos", "duration", "pause", "volume", "mute"}
 	for i, p := range props {
 		if err := c.send(map[string]any{
 			"command": []any{"observe_property", i + 1, p},
@@ -188,6 +189,10 @@ func (c *Controller) SetVolume(vol float64) error {
 	return c.send(map[string]any{"command": []any{"set_property", "volume", vol}})
 }
 
+func (c *Controller) SetMute(mute bool) error {
+	return c.send(map[string]any{"command": []any{"set_property", "mute", mute}})
+}
+
 func (c *Controller) Stop() error {
 	close(c.done)
 	if c.conn != nil {
@@ -232,19 +237,23 @@ func (c *Controller) handlePropertyChange(msg ipcMessage) {
 	switch msg.Name {
 	case "time-pos":
 		if v, ok := toFloat(msg.Data); ok {
-			c.events <- Event{TimePos: v}
+			c.events <- Event{TimePos: &v}
 		}
 	case "duration":
 		if v, ok := toFloat(msg.Data); ok {
-			c.events <- Event{Duration: v}
+			c.events <- Event{Duration: &v}
 		}
 	case "pause":
 		if b, ok := msg.Data.(bool); ok {
-			c.events <- Event{Paused: b}
+			c.events <- Event{Paused: &b}
 		}
 	case "volume":
 		if v, ok := toFloat(msg.Data); ok {
-			c.events <- Event{Volume: v}
+			c.events <- Event{Volume: &v}
+		}
+	case "mute":
+		if b, ok := msg.Data.(bool); ok {
+			c.events <- Event{Muted: &b}
 		}
 	}
 }
