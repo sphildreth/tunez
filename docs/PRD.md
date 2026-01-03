@@ -22,7 +22,7 @@ Tunez is a terminal-first music player with a rich, keyboard-driven TUI for brow
 |-------|--------|-------------|
 | Phase 1 (MVP) | ✅ Complete | Core playback, browsing, TUI screens |
 | Phase 2 (v1) | ✅ Complete | Lyrics, artwork, themes, scrobbling, visualizer (cache deferred to v1.1) |
-| Phase 3 (v2) | 🔶 In Progress | Command palette ✅, CLI utilities ✅, help keybindings ✅, diagnostics pending |
+| Phase 3 (v2) | ✅ Complete | Command palette, CLI utilities, diagnostics, help keybindings |
 
 ---
 
@@ -551,51 +551,47 @@ Start playback from command line, then launch TUI.
 ### 3.3 Advanced Diagnostics
 
 **Priority:** LOW  
-**Complexity:** Low
+**Complexity:** Low  
+**Status:** ✅ Complete
 
 Debug overlay for troubleshooting.
 
 #### Requirements
-- Toggle with `Ctrl+D`
-- Show provider request latency
-- Show cache hit rates
-- Show mpv connection status
-- Show memory usage
+- Toggle with `Ctrl+D` ✅
+- Show provider request latency ✅
+- Show cache hit rates ✅
+- Show mpv connection status ✅
+- Show memory usage ✅
 
 #### Implementation Tasks
 ```
-[ ] Create diagnostics state
-    - lastRequestLatency time.Duration
-    - cacheHits, cacheMisses int
-    - mpvConnected bool
-    - memoryUsage uint64
+[x] Create diagnostics state
+    - Request timing (last, average, count)
+    - Artwork cache hits/misses with hit rate
+    - mpv connected status, reconnects, last error
+    - Memory usage (runtime.MemStats)
+    - Goroutine count
+    - Visualizer running status
 
-[ ] Implement diagnostics overlay
-    - Semi-transparent overlay
-    - Key metrics in corner
-    - Auto-refresh every second
+[x] Implement diagnostics overlay
+    - Positioned in top-right corner
+    - Shows runtime, provider, cache, mpv, visualizer, playback, queue stats
+    - Updates on each render
 
-[ ] Add request timing
-    - Wrap provider calls with timing
-    - Store last N request latencies
+[x] Integrate with app
+    - Ctrl+D toggles overlay
+    - ESC closes overlay
+    - Visualizer state updates on tick
 
-[ ] Add mpv health monitoring
-    - Periodic ping to mpv
-    - Track reconnection attempts
-
-[ ] Add config option
-    - debug.enabled (bool, default: false)
-    - debug.overlay_key (string, default: "ctrl+d")
-
-[ ] Add tests
-    - Timing accuracy
-    - Overlay rendering
+[x] Add tests
+    - DiagnosticsState unit tests
+    - formatBytes helper tests
 ```
 
-#### Files to Modify
-- `internal/app/diagnostics.go` - New file
-- `internal/app/app.go` - Integrate diagnostics
-- `internal/player/player.go` - Add health check
+#### Files Modified
+- `internal/app/diagnostics.go` - DiagnosticsState and Render
+- `internal/app/diagnostics_test.go` - Tests
+- `internal/app/app.go` - Ctrl+D handling, state integration
 
 ---
 
@@ -672,7 +668,7 @@ Helpful CLI commands for setup and troubleshooting.
 Phase 3 is complete when:
 1. [x] Command palette works with fuzzy search
 2. [x] CLI play commands work (--artist, --album, --play, --random)
-3. [ ] Diagnostics overlay shows useful metrics
+3. [x] Diagnostics overlay shows useful metrics
 4. [x] Help overlay shows actual configured keybindings
 5. [x] CLI utilities (version, config init, doctor) work
 6. [x] All Phase 3 tests pass

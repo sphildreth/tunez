@@ -174,6 +174,10 @@ type Model struct {
 	showPalette     bool
 	paletteState    *PaletteState
 	commandRegistry *CommandRegistry
+
+	// Diagnostics state (Phase 3)
+	showDiagnostics  bool
+	diagnosticsState *DiagnosticsState
 }
 
 type searchFilter int
@@ -236,6 +240,9 @@ func New(cfg *config.Config, prov provider.Provider, factory ProviderFactory, pl
 	// Initialize command palette (Phase 3)
 	m.commandRegistry = NewCommandRegistry(&m)
 	m.paletteState = NewPaletteState(m.commandRegistry)
+
+	// Initialize diagnostics (Phase 3)
+	m.diagnosticsState = NewDiagnosticsState()
 
 	return m
 }
@@ -865,8 +872,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Toggle diagnostics overlay with ctrl+d
+		if key == "ctrl+d" {
+			m.showDiagnostics = !m.showDiagnostics
+			return m, nil
+		}
+
 		// ESC closes help overlay or goes back
 		if key == "esc" {
+			if m.showDiagnostics {
+				m.showDiagnostics = false
+				return m, nil
+			}
 			if m.showHelp {
 				m.showHelp = false
 				return m, nil
@@ -1432,6 +1449,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case vizTickMsg:
+		// Update visualizer diagnostics
+		if m.diagnosticsState != nil && m.visualizer != nil {
+			m.diagnosticsState.VisualizerRunning = m.visualizer.Running()
+			m.diagnosticsState.VisualizerFPS = 30 // ~30fps target
+		}
 		// Continue ticking only if visualizer is running and we're playing
 		if m.visualizer != nil && m.visualizer.Running() && !m.paused && m.nowPlaying.ID != "" {
 			return m, vizTickCmd()
@@ -1667,10 +1689,22 @@ func (m Model) View() string {
 	}
 
 	// Combine all vertically
+	var mainView string
 	if statusLine != "" {
-		return lipgloss.JoinVertical(lipgloss.Left, topBar, middle, statusLine, playerBar)
+		mainView = lipgloss.JoinVertical(lipgloss.Left, topBar, middle, statusLine, playerBar)
+	} else {
+		mainView = lipgloss.JoinVertical(lipgloss.Left, topBar, middle, playerBar)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, topBar, middle, playerBar)
+
+	// Overlay diagnostics panel if enabled
+	if m.showDiagnostics {
+		diagPanel := m.diagnosticsState.Render(&m)
+		// Place diagnostics in top-right corner over main view
+		return lipgloss.Place(m.width, m.height, lipgloss.Right, lipgloss.Top, diagPanel,
+			lipgloss.WithWhitespaceBackground(lipgloss.NoColor{}))
+	}
+
+	return mainView
 }
 
 func (m Model) renderTopBar(width int) string {
