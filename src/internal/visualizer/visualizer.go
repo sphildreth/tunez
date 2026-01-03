@@ -27,14 +27,14 @@ type Visualizer struct {
 
 // Config holds visualizer configuration.
 type Config struct {
-	BarCount int // Number of frequency bars (default: 16)
+	BarCount int // Number of frequency bars (default: 24)
 	MaxValue int // Maximum bar value for scaling (default: 1000)
 }
 
 // New creates a new Visualizer instance.
 func New(cfg Config) *Visualizer {
 	if cfg.BarCount <= 0 {
-		cfg.BarCount = 16
+		cfg.BarCount = 24 // Wider default
 	}
 	if cfg.MaxValue <= 0 {
 		cfg.MaxValue = 1000
@@ -250,27 +250,138 @@ func (v *Visualizer) Render() string {
 	return sb.String()
 }
 
-// RenderWithColor returns a colored ANSI string representation.
-func (v *Visualizer) RenderWithColor(colorCode string) string {
+// RenderRainbow returns a rainbow-colored visualization using full blocks.
+// Each bar gets a color from the rainbow spectrum based on its position.
+func (v *Visualizer) RenderRainbow() string {
 	bars := v.BarsNormalized()
 	if len(bars) == 0 {
 		return ""
 	}
 
+	// Rainbow colors (ANSI 256-color codes)
+	rainbowColors := []int{196, 202, 208, 214, 220, 226, 190, 154, 118, 82, 46, 47, 48, 49, 50, 51, 45, 39, 33, 27, 21, 57, 93, 129}
+
+	// Unicode block characters for different heights
 	blocks := []rune{' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 
 	var sb strings.Builder
 	sb.WriteString("║")
-	for _, val := range bars {
+	for i, val := range bars {
 		if val < 0 {
 			val = 0
 		}
 		if val > 8 {
 			val = 8
 		}
-		sb.WriteRune(blocks[val])
+		// Pick color based on bar position
+		colorIdx := (i * len(rainbowColors)) / len(bars)
+		if colorIdx >= len(rainbowColors) {
+			colorIdx = len(rainbowColors) - 1
+		}
+		color := rainbowColors[colorIdx]
+
+		if val == 0 {
+			sb.WriteString(" ")
+		} else {
+			sb.WriteString(fmt.Sprintf("\x1b[38;5;%dm%c\x1b[0m", color, blocks[val]))
+		}
 	}
 	sb.WriteString("║")
 
 	return sb.String()
+}
+
+// RenderTall returns a multi-line visualization for taller display.
+// height specifies how many terminal rows to use.
+// Deprecated: Use RenderSized instead.
+func (v *Visualizer) RenderTall(height int, rainbow bool) string {
+	return v.RenderSized(0, height, rainbow)
+}
+
+// RenderSized returns a visualization with specified width and height.
+// width is the number of characters (0 = use bar count)
+// height is the number of terminal rows (0 = auto based on width)
+func (v *Visualizer) RenderSized(width, height int, rainbow bool) string {
+	bars := v.Bars()
+	if len(bars) == 0 {
+		return ""
+	}
+
+	// Default width to bar count
+	if width <= 0 {
+		width = len(bars)
+	}
+
+	// Auto height: roughly 1 row per 12-15 chars width for good aspect ratio
+	if height <= 0 {
+		height = (width + 11) / 12
+		if height < 2 {
+			height = 2
+		}
+		if height > 6 {
+			height = 6
+		}
+	}
+
+	// Rainbow colors (ANSI 256-color codes) - full spectrum
+	rainbowColors := []int{196, 202, 208, 214, 220, 226, 190, 154, 118, 82, 46, 47, 48, 49, 50, 51, 45, 39, 33, 27, 21, 57, 93, 129}
+
+	// Interpolate/stretch bars to fit width
+	stretched := make([]int, width)
+	for i := 0; i < width; i++ {
+		// Map output position to input bar
+		srcIdx := (i * len(bars)) / width
+		if srcIdx >= len(bars) {
+			srcIdx = len(bars) - 1
+		}
+		stretched[i] = bars[srcIdx]
+	}
+
+	// Normalize to height * 8 for sub-character resolution
+	maxHeight := height * 8
+	normalized := make([]int, width)
+	for i, val := range stretched {
+		n := (val * maxHeight) / v.maxValue
+		if n > maxHeight {
+			n = maxHeight
+		}
+		normalized[i] = n
+	}
+
+	// Build from top to bottom
+	var lines []string
+	blocks := []rune{' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
+
+	for row := height - 1; row >= 0; row-- {
+		var sb strings.Builder
+		sb.WriteString("║")
+		threshold := row * 8
+
+		for i, val := range normalized {
+			remaining := val - threshold
+			if remaining <= 0 {
+				sb.WriteString(" ")
+			} else {
+				blockIdx := remaining
+				if blockIdx > 8 {
+					blockIdx = 8
+				}
+
+				if rainbow {
+					colorIdx := (i * len(rainbowColors)) / width
+					if colorIdx >= len(rainbowColors) {
+						colorIdx = len(rainbowColors) - 1
+					}
+					color := rainbowColors[colorIdx]
+					sb.WriteString(fmt.Sprintf("\x1b[38;5;%dm%c\x1b[0m", color, blocks[blockIdx]))
+				} else {
+					sb.WriteRune(blocks[blockIdx])
+				}
+			}
+		}
+		sb.WriteString("║")
+		lines = append(lines, sb.String())
+	}
+
+	return strings.Join(lines, "\n")
 }

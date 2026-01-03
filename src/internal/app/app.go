@@ -200,7 +200,7 @@ func New(cfg *config.Config, prov provider.Provider, factory ProviderFactory, pl
 	var viz *visualizer.Visualizer
 	if visualizer.Available() {
 		viz = visualizer.New(visualizer.Config{
-			BarCount: 16,
+			BarCount: 24, // Wider visualizer
 			MaxValue: 1000,
 		})
 	}
@@ -1843,14 +1843,23 @@ func (m Model) renderNowPlaying() string {
 
 		b.WriteString("  " + progressBar + "  " + m.theme.Dim.Render(timeStr) + "\n\n")
 
-		// Visualizer
-		b.WriteString(m.theme.Dim.Render("  Visualizer: "))
+		// Visualizer - match progress bar width
 		if m.visualizer != nil && m.visualizer.Running() {
-			vizBars := m.visualizer.Render()
-			b.WriteString(m.theme.Accent.Render(vizBars) + "\n\n")
+			// Use rainbow colors for rainbow theme, plain for others
+			useRainbow := m.cfg.UI.Theme == "" || m.cfg.UI.Theme == "rainbow"
+			vizBars := m.visualizer.RenderSized(barWidth, 0, useRainbow) // 0 height = auto
+			// Indent each line
+			for i, line := range strings.Split(vizBars, "\n") {
+				if i > 0 {
+					b.WriteString("\n")
+				}
+				b.WriteString("  " + line)
+			}
+			b.WriteString("\n\n")
+		} else if visualizer.Available() {
+			b.WriteString(m.theme.Dim.Render("  Visualizer: (starting...)") + "\n\n")
 		} else {
-			// Static placeholder when visualizer not available
-			b.WriteString(m.theme.Dim.Render("(cava not installed)") + "\n\n")
+			b.WriteString(m.theme.Dim.Render("  Visualizer: (cava not installed)") + "\n\n")
 		}
 	}
 

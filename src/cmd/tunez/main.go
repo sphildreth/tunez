@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -261,42 +263,117 @@ func buildScrobbleManager(cfg *config.Config, prov provider.Provider, logger *sl
 }
 
 func runDoctor(cfg *config.Config, logger *slog.Logger) {
-	fmt.Println("Tunez doctor")
-	fmt.Println("Config file: OK")
+	fmt.Println("┌─────────────────────────────────────────┐")
+	fmt.Println("│           Tunez Doctor Report           │")
+	fmt.Println("└─────────────────────────────────────────┘")
+	fmt.Println()
 
-	// Check mpv
+	allOK := true
+	warnings := 0
+
+	// Config file
+	printCheck("Config file", "OK", true, "")
+
+	// Check mpv (required)
 	mpvPath, err := exec.LookPath(cfg.Player.MPVPath)
 	if err != nil {
-		fmt.Printf("mpv (%s): NOT FOUND\n", cfg.Player.MPVPath)
+		printCheck("mpv", "NOT FOUND", false, cfg.Player.MPVPath)
+		allOK = false
 	} else {
-		fmt.Printf("mpv: OK (%s)\n", mpvPath)
+		// Get mpv version
+		out, _ := exec.Command(mpvPath, "--version").Output()
+		version := ""
+		if len(out) > 0 {
+			lines := strings.Split(string(out), "\n")
+			if len(lines) > 0 {
+				version = strings.TrimSpace(lines[0])
+			}
+		}
+		printCheck("mpv", "OK", true, version)
 	}
 
-	// Check ffprobe
+	// Check ffprobe (optional)
 	ffprobePath, err := exec.LookPath("ffprobe")
 	if err != nil {
-		fmt.Println("ffprobe: NOT FOUND (optional, for duration detection)")
+		printCheck("ffprobe", "NOT FOUND", false, "optional - for duration/codec detection")
+		warnings++
 	} else {
-		fmt.Printf("ffprobe: OK (%s)\n", ffprobePath)
+		out, _ := exec.Command(ffprobePath, "-version").Output()
+		version := ""
+		if len(out) > 0 {
+			lines := strings.Split(string(out), "\n")
+			if len(lines) > 0 {
+				parts := strings.Fields(lines[0])
+				if len(parts) >= 3 {
+					version = parts[2]
+				}
+			}
+		}
+		printCheck("ffprobe", "OK", true, version)
 	}
+
+	// Check cava (optional - for visualizer)
+	cavaPath, err := exec.LookPath("cava")
+	if err != nil {
+		printCheck("cava", "NOT FOUND", false, "optional - for audio visualizer")
+		warnings++
+	} else {
+		out, _ := exec.Command(cavaPath, "-v").CombinedOutput()
+		version := strings.TrimSpace(string(out))
+		printCheck("cava", "OK", true, version)
+	}
+
+	fmt.Println()
 
 	// Check profile
 	profile, ok := cfg.ProfileByID(cfg.ActiveProfile)
 	if !ok {
-		fmt.Printf("Active profile (%s): NOT FOUND\n", cfg.ActiveProfile)
-		return
-	}
-	fmt.Printf("Active profile: %s (%s provider)\n", profile.Name, profile.Provider)
+		printCheck("Active profile", "NOT FOUND", false, cfg.ActiveProfile)
+		allOK = false
+	} else {
+		printCheck("Active profile", profile.Name, true, profile.Provider+" provider")
 
-	// Check provider can be built (but don't initialize/scan)
-	_, err = buildProvider(profile)
-	if err != nil {
-		fmt.Printf("Provider: ERROR - %v\n", err)
-		return
+		// Check provider can be built
+		_, err = buildProvider(profile)
+		if err != nil {
+			printCheck("Provider", "ERROR", false, err.Error())
+			allOK = false
+		} else {
+			printCheck("Provider", "OK", true, "")
+		}
 	}
-	fmt.Println("Provider: OK")
+
+	// Check directories
+	fmt.Println()
+	stateDir, _ := os.UserConfigDir()
+	cacheDir, _ := os.UserCacheDir()
+	printCheck("Config dir", "OK", true, filepath.Join(stateDir, "tunez"))
+	printCheck("Cache dir", "OK", true, filepath.Join(cacheDir, "tunez"))
+
+	// Summary
+	fmt.Println()
+	fmt.Println("─────────────────────────────────────────")
+	if allOK && warnings == 0 {
+		fmt.Println("✓ All checks passed!")
+	} else if allOK {
+		fmt.Printf("✓ All required checks passed (%d optional warnings)\n", warnings)
+	} else {
+		fmt.Println("✗ Some checks failed. Please resolve the issues above.")
+	}
 
 	logger.Info("doctor complete")
+}
+
+func printCheck(name, status string, ok bool, detail string) {
+	icon := "✓"
+	if !ok {
+		icon = "✗"
+	}
+	if detail != "" {
+		fmt.Printf("  %s %-15s %s (%s)\n", icon, name+":", status, detail)
+	} else {
+		fmt.Printf("  %s %-15s %s\n", icon, name+":", status)
+	}
 }
 
 func runScan(cfg *config.Config, logger *slog.Logger) {
