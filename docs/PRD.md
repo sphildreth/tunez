@@ -187,3 +187,14 @@ MVP is accepted when all items below are true:
 - Playlists create/edit (provider-gated)
 - Additional UI themes (monochrome, green terminal, etc.)
 - Advanced library sorting/filtering (genre/year/rating)
+
+## 8. Related Documents
+- **Technical Design**: [TECH_DESIGN.md](TECH_DESIGN.md) — Architecture overview, process model, and Bubble Tea strategy.
+- **Provider Interface**: [PROVIDERS.md](PROVIDERS.md) — Detailed contract for implementing music providers.
+- **TUI/UX Specification**: [TUI_UX.md](TUI_UX.md) — Full screen set, interactions, and keybindings.
+- **Configuration**: [CONFIG.md](CONFIG.md) — Config file format, profiles, and settings.
+- **Security & Privacy**: [SECURITY_PRIVACY.md](SECURITY_PRIVACY.md) — Handling of secrets, network security, and data privacy.
+- **Test Strategy**: [TEST_STRATEGY.md](TEST_STRATEGY.md) — Unit, integration, and provider contract testing approaches.
+- **Implementation Plan**: [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) — Milestone-based development roadmap.
+- **Work Breakdown Structure**: [WBS_GUIDE.md](WBS_GUIDE.md) — Slice-based planning for incremental development.
+- **Decisions**: [DECISIONS.md](DECISIONS.md) — Architectural trade-offs and clarifications.
