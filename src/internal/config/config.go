@@ -217,7 +217,7 @@ func applyDefaults(cfg *Config) {
 		cfg.Keybindings.Help = "?"
 	}
 	if cfg.Keybindings.Quit == "" {
-		cfg.Keybindings.Quit = "ctrl+c"
+		cfg.Keybindings.Quit = "q,ctrl+c"
 	}
 	// Queue defaults - persist enabled by default
 	if !cfg.Queue.Persist {

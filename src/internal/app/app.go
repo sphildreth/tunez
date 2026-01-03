@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -631,12 +632,16 @@ func (m Model) switchProfileCmd(profile config.Profile) tea.Cmd {
 // matchKey returns true if the key matches the binding.
 // Handles both single keys and aliases (e.g., "space" matches " ").
 func matchKey(key, binding string) bool {
-	if key == binding {
-		return true
-	}
-	// Handle special cases
-	if binding == "space" && key == " " {
-		return true
+	// Support comma-separated bindings (e.g., "q,ctrl+c")
+	for _, b := range strings.Split(binding, ",") {
+		b = strings.TrimSpace(b)
+		if key == b {
+			return true
+		}
+		// Handle special cases
+		if b == "space" && key == " " {
+			return true
+		}
 	}
 	return false
 }
@@ -1789,6 +1794,20 @@ func (m Model) renderNowPlaying() string {
 			m.theme.Dim.Render("Artist: ")+m.theme.Text.Render(m.nowPlaying.ArtistName),
 			m.theme.Dim.Render("Album: ")+m.theme.Text.Render(m.nowPlaying.AlbumTitle),
 		)
+		if m.nowPlaying.Year > 0 {
+			trackInfo = lipgloss.JoinVertical(lipgloss.Left,
+				trackInfo,
+				m.theme.Dim.Render("Year: ")+m.theme.Text.Render(fmt.Sprintf("%d", m.nowPlaying.Year)),
+			)
+		}
+		if m.nowPlaying.StreamURL != "" && !strings.HasPrefix(m.nowPlaying.StreamURL, "http://") && !strings.HasPrefix(m.nowPlaying.StreamURL, "https://") {
+			// Extract just the filename from the path (only for local files, not streams)
+			fileName := filepath.Base(m.nowPlaying.StreamURL)
+			trackInfo = lipgloss.JoinVertical(lipgloss.Left,
+				trackInfo,
+				m.theme.Dim.Render("File: ")+m.theme.Text.Render(fileName),
+			)
+		}
 		if m.nowPlaying.Codec != "" {
 			trackInfo = lipgloss.JoinVertical(lipgloss.Left,
 				trackInfo,

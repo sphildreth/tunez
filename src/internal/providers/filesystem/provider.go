@@ -335,7 +335,13 @@ func (p *Provider) listArtists(ctx context.Context, req provider.ListReq) (provi
 		pageSize = p.cfg.PageSize
 	}
 	_, offset := parseCursor(req.Cursor)
-	rows, err := p.db.QueryContext(ctx, `SELECT id,name,sort_name FROM artists ORDER BY sort_name LIMIT ? OFFSET ?`, pageSize+1, offset)
+	rows, err := p.db.QueryContext(ctx, `
+		SELECT a.id, a.name, a.sort_name, COUNT(al.id) as album_count
+		FROM artists a
+		LEFT JOIN albums al ON al.artist_id = a.id
+		GROUP BY a.id
+		ORDER BY a.sort_name
+		LIMIT ? OFFSET ?`, pageSize+1, offset)
 	if err != nil {
 		return provider.Page[provider.Artist]{}, err
 	}
@@ -343,7 +349,7 @@ func (p *Provider) listArtists(ctx context.Context, req provider.ListReq) (provi
 	var items []provider.Artist
 	for rows.Next() {
 		var a provider.Artist
-		if err := rows.Scan(&a.ID, &a.Name, &a.SortName); err != nil {
+		if err := rows.Scan(&a.ID, &a.Name, &a.SortName, &a.AlbumCount); err != nil {
 			return provider.Page[provider.Artist]{}, err
 		}
 		items = append(items, a)
@@ -358,7 +364,12 @@ func (p *Provider) listArtists(ctx context.Context, req provider.ListReq) (provi
 
 func (p *Provider) GetArtist(ctx context.Context, id string) (provider.Artist, error) {
 	var a provider.Artist
-	err := p.db.QueryRowContext(ctx, `SELECT id,name,sort_name FROM artists WHERE id=?`, id).Scan(&a.ID, &a.Name, &a.SortName)
+	err := p.db.QueryRowContext(ctx, `
+		SELECT a.id, a.name, a.sort_name, COUNT(al.id) as album_count
+		FROM artists a
+		LEFT JOIN albums al ON al.artist_id = a.id
+		WHERE a.id = ?
+		GROUP BY a.id`, id).Scan(&a.ID, &a.Name, &a.SortName, &a.AlbumCount)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return provider.Artist{}, provider.ErrNotFound
@@ -537,7 +548,14 @@ func (p *Provider) Search(ctx context.Context, q string, req provider.ListReq) (
 
 	// Search Artists
 	if targetType == "" || targetType == "artists" {
-		rows, err := p.db.QueryContext(ctx, `SELECT id,name,sort_name FROM artists WHERE lower(name) LIKE ? ORDER BY sort_name LIMIT ? OFFSET ?`, pattern, pageSize+1, offset)
+		rows, err := p.db.QueryContext(ctx, `
+			SELECT a.id, a.name, a.sort_name, COUNT(al.id) as album_count
+			FROM artists a
+			LEFT JOIN albums al ON al.artist_id = a.id
+			WHERE lower(a.name) LIKE ?
+			GROUP BY a.id
+			ORDER BY a.sort_name
+			LIMIT ? OFFSET ?`, pattern, pageSize+1, offset)
 		if err != nil {
 			return provider.SearchResults{}, err
 		}
@@ -545,7 +563,7 @@ func (p *Provider) Search(ctx context.Context, q string, req provider.ListReq) (
 		var artists []provider.Artist
 		for rows.Next() {
 			var a provider.Artist
-			if err := rows.Scan(&a.ID, &a.Name, &a.SortName); err != nil {
+			if err := rows.Scan(&a.ID, &a.Name, &a.SortName, &a.AlbumCount); err != nil {
 				return provider.SearchResults{}, err
 			}
 			artists = append(artists, a)

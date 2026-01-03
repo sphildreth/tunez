@@ -198,6 +198,32 @@ See [docs/CONFIG.md](docs/CONFIG.md) for the full configuration reference.
 
 ## Themes & Accessibility
 
+Tunez ships with **19 beautiful themes** to match your terminal aesthetic:
+
+| Theme | Description |
+|-------|-------------|
+| `rainbow` | Default colorful theme |
+| `mono` | Elegant grayscale |
+| `green` | Classic terminal green |
+| `nocolor` | Accessible (respects NO_COLOR) |
+| `dracula` | Popular dark theme |
+| `nord` | Arctic, bluish tones |
+| `solarized` | Precision colors |
+| `gruvbox` | Retro, earthy tones |
+| `synthwave` | 80s neon vibes |
+| `matrix` | Digital rain green |
+| `neon` | Bright cyberpunk |
+| ... | and 8 more! |
+
+### Set a theme
+
+```toml
+[ui]
+theme = "dracula"
+```
+
+### NO_COLOR support
+
 Tunez respects the `NO_COLOR` environment variable for accessibility:
 
 ```bash
@@ -210,6 +236,10 @@ You can also disable emoji in the config:
 [ui]
 no_emoji = true
 ```
+
+### Create your own theme
+
+Want to create a custom theme? See the [Theme Contributor Guide](src/internal/ui/themes/README.md) for step-by-step instructions.
 
 ## Documentation
 
