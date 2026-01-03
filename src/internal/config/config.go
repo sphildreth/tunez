@@ -21,6 +21,7 @@ type Config struct {
 	Player        PlayerConfig     `toml:"player"`
 	Queue         QueueConfig      `toml:"queue"`
 	Artwork       ArtworkConfig    `toml:"artwork"`
+	Scrobble      ScrobbleConfig   `toml:"scrobble"`
 	Keybindings   KeybindConfig    `toml:"keybindings"`
 	Profiles      []Profile        `toml:"profiles"`
 	Scrobblers    []ScrobblerEntry `toml:"scrobblers"`
@@ -36,6 +37,11 @@ type ArtworkConfig struct {
 	Enabled   bool `toml:"enabled"`
 	Width     int  `toml:"width"`
 	CacheDays int  `toml:"cache_days"`
+}
+
+// ScrobbleConfig holds global scrobbling settings.
+type ScrobbleConfig struct {
+	Enabled bool `toml:"enabled"` // Master switch for all scrobblers
 }
 
 // ScrobblerEntry defines a scrobbler configuration.

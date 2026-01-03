@@ -13,7 +13,7 @@ active_profile = "home-files"
 [ui]
 page_size = 100
 no_emoji = false
-theme = "rainbow"          # rainbow (default) | mono (v1+) | green (v1+) | ...
+theme = "rainbow"          # rainbow (default) | mono | green | nocolor
 
 [player]
 mpv_path = "mpv"
@@ -21,6 +21,33 @@ ipc = "auto"              # auto | unix | pipe
 initial_volume = 70
 cache_secs = 30            # mpv cache-secs
 network_timeout_ms = 8000
+
+[queue]
+persist = true             # Persist queue across restarts
+
+[artwork]
+enabled = true             # Show album artwork in Now Playing
+width = 20                 # Artwork width in characters
+cache_days = 30            # Days to cache converted artwork
+
+[scrobble]
+enabled = false            # Master switch for all scrobblers
+
+[[scrobblers]]
+id = "lastfm"
+type = "lastfm"
+enabled = true
+[scrobblers.settings]
+api_key = "your_lastfm_api_key"
+api_secret = "your_lastfm_api_secret"
+session_key = "your_session_key"
+
+[[scrobblers]]
+id = "melodee"
+type = "melodee"
+enabled = true
+[scrobblers.settings]
+provider = "melodee"       # Reuse auth from this provider
 
 [[profiles]]
 id = "home-files"
@@ -47,24 +74,93 @@ page_size = 200
 cache_db = "melodee_cache.sqlite"
 
 [keybindings]
-"app.quit" = ["ctrl+c"]
-"app.help" = ["?"]
-"nav.search" = ["/"]
-"player.play_pause" = ["space"]
-"player.next" = ["n"]
-"player.prev" = ["p"]
-"player.seek_forward_small" = ["l"]
-"player.seek_back_small" = ["h"]
-"player.volume_up" = ["+"]
-"player.volume_down" = ["-"]
+play_pause = "space"
+next_track = "n"
+prev_track = "p"
+seek_forward = "l"
+seek_backward = "h"
+volume_up = "+"
+volume_down = "-"
+mute = "m"
+shuffle = "s"
+repeat = "r"
+search = "/"
+help = "?"
+quit = "ctrl+c"
 ```
 
-## Validation rules (MVP)
+## Configuration Sections
+
+### `[ui]`
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `page_size` | int | 100 | Items per page in lists |
+| `no_emoji` | bool | false | Disable emoji in UI |
+| `theme` | string | "rainbow" | Color theme: rainbow, mono, green, nocolor |
+
+### `[player]`
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `mpv_path` | string | "mpv" | Path to mpv binary |
+| `ipc` | string | "auto" | IPC method: auto, unix, pipe |
+| `initial_volume` | int | 70 | Starting volume (0-100) |
+| `cache_secs` | int | 30 | mpv cache seconds |
+| `network_timeout_ms` | int | 8000 | Network timeout in milliseconds |
+| `seek_small_seconds` | int | 5 | Small seek step |
+| `seek_large_seconds` | int | 30 | Large seek step |
+| `volume_step` | int | 5 | Volume adjustment step |
+
+### `[queue]`
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `persist` | bool | true | Save queue across restarts |
+
+### `[artwork]`
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | true | Show artwork in Now Playing |
+| `width` | int | 20 | Artwork width in characters |
+| `cache_days` | int | 30 | Days to cache converted artwork |
+
+### `[scrobble]`
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | false | Master switch for scrobbling |
+
+### `[[scrobblers]]`
+Array of scrobbler configurations.
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `id` | string | Unique identifier |
+| `type` | string | Scrobbler type: lastfm, melodee |
+| `enabled` | bool | Enable this scrobbler |
+| `settings` | table | Type-specific settings |
+
+**Last.fm settings:**
+- `api_key` - Last.fm API key
+- `api_secret` - Last.fm API secret
+- `session_key` - Authenticated session key
+
+**Melodee settings:**
+- `provider` - Provider ID to reuse auth from
+- `base_url` - API base URL (if not using provider)
+- `token` - Static auth token (if not using provider)
+
+## Themes
+
+| Theme | Description |
+|-------|-------------|
+| `rainbow` | Colorful default theme with accent colors |
+| `mono` | Grayscale theme using white/gray tones |
+| `green` | Classic green-on-black terminal aesthetic |
+| `nocolor` | Plain text, no ANSI colors (accessibility) |
+
+The `nocolor` theme is automatically selected when the `NO_COLOR` environment variable is set.
+
+## Validation Rules
 - `active_profile` must exist and be enabled
 - mpv must be discoverable (PATH or `mpv_path`)
 - Filesystem roots must exist
-- Melodee base_url must be valid
-
-## UI theme (requirement)
-- The default theme is intended to be very colorful with rainbow-like ANSI effects.
-- Additional themes will be implemented later (v1+), including monochromatic and “green terminal” styles.
+- Melodee base_url must be valid URL
+- Theme must be one of: rainbow, mono, green, nocolor

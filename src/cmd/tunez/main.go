@@ -12,6 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tunez/tunez/internal/app"
+	"github.com/tunez/tunez/internal/artwork"
 	"github.com/tunez/tunez/internal/config"
 	"github.com/tunez/tunez/internal/logging"
 	"github.com/tunez/tunez/internal/player"
@@ -19,6 +20,9 @@ import (
 	"github.com/tunez/tunez/internal/providers/filesystem"
 	"github.com/tunez/tunez/internal/providers/melodee"
 	"github.com/tunez/tunez/internal/queue"
+	"github.com/tunez/tunez/internal/scrobble"
+	"github.com/tunez/tunez/internal/scrobble/lastfm"
+	scrobblemelodee "github.com/tunez/tunez/internal/scrobble/melodee"
 	"github.com/tunez/tunez/internal/ui"
 )
 
@@ -127,9 +131,36 @@ Examples:
 		}
 	}
 
+	// Initialize scrobble manager if enabled
+	var scrobbleMgr *scrobble.Manager
+	if cfg.Scrobble.Enabled {
+		scrobbleMgr = buildScrobbleManager(cfg, prov, logger)
+		if scrobbleMgr != nil {
+			// Load pending scrobbles from disk
+			if err := scrobbleMgr.LoadPending(); err != nil {
+				logger.Warn("failed to load pending scrobbles", slog.Any("err", err))
+			}
+			// Save pending scrobbles on shutdown
+			defer func() {
+				if err := scrobbleMgr.SavePending(); err != nil {
+					logger.Warn("failed to save pending scrobbles", slog.Any("err", err))
+				}
+			}()
+		}
+	}
+
 	// NO_COLOR env var support per accessibility spec
 	noColor := os.Getenv("NO_COLOR") != "" || cfg.UI.NoEmoji
 	theme := ui.GetTheme(cfg.UI.Theme, noColor)
+
+	// Initialize artwork cache if enabled
+	var artCache *artwork.Cache
+	if cfg.Artwork.Enabled {
+		artCache, err = artwork.NewCache("", cfg.Artwork.CacheDays)
+		if err != nil {
+			logger.Warn("artwork cache unavailable", slog.Any("err", err))
+		}
+	}
 
 	// Build startup options from CLI flags
 	startupOpts := app.StartupOptions{
@@ -141,7 +172,7 @@ Examples:
 
 	model := app.New(cfg, prov, func(p config.Profile) (provider.Provider, error) {
 		return buildProvider(p)
-	}, ctrl, profile.Settings, theme, startupOpts, queueStore, logger)
+	}, ctrl, profile.Settings, theme, startupOpts, queueStore, scrobbleMgr, artCache, logger)
 	if _, err := tea.NewProgram(model, tea.WithAltScreen()).Run(); err != nil {
 		logger.Error("run tui", slog.Any("err", err))
 		log.Fatalf("tui: %v", err)
@@ -157,6 +188,76 @@ func buildProvider(p config.Profile) (provider.Provider, error) {
 	default:
 		return nil, fmt.Errorf("unknown provider %s", p.Provider)
 	}
+}
+
+// buildScrobbleManager creates and configures the scrobble manager based on config.
+func buildScrobbleManager(cfg *config.Config, prov provider.Provider, logger *slog.Logger) *scrobble.Manager {
+	if len(cfg.Scrobblers) == 0 {
+		return nil
+	}
+
+	mgr := scrobble.NewManager()
+
+	for _, entry := range cfg.Scrobblers {
+		if !entry.Enabled {
+			continue
+		}
+
+		var s scrobble.Scrobbler
+		switch entry.Type {
+		case "lastfm":
+			lfmCfg := lastfm.Config{}
+			if v, ok := entry.Settings["api_key"].(string); ok {
+				lfmCfg.APIKey = v
+			}
+			if v, ok := entry.Settings["api_secret"].(string); ok {
+				lfmCfg.APISecret = v
+			}
+			if v, ok := entry.Settings["session_key"].(string); ok {
+				lfmCfg.SessionKey = v
+			}
+			s = lastfm.New(entry.ID, lfmCfg)
+			logger.Info("registered scrobbler", slog.String("id", entry.ID), slog.String("type", "lastfm"))
+
+		case "melodee":
+			melCfg := scrobblemelodee.Config{}
+			// Check if we should reuse auth from a melodee provider
+			if provID, ok := entry.Settings["provider"].(string); ok && provID != "" {
+				// Try to get token from current provider if it's melodee
+				if mp, ok := prov.(*melodee.Provider); ok && prov.ID() == provID {
+					melCfg.TokenProvider = mp
+					melCfg.BaseURL = mp.BaseURL()
+				}
+			}
+			// Fallback to explicit settings
+			if melCfg.BaseURL == "" {
+				if v, ok := entry.Settings["base_url"].(string); ok {
+					melCfg.BaseURL = v
+				}
+			}
+			if melCfg.TokenProvider == nil {
+				if v, ok := entry.Settings["token"].(string); ok {
+					melCfg.Token = v
+				}
+			}
+			s = scrobblemelodee.New(entry.ID, melCfg)
+			logger.Info("registered scrobbler", slog.String("id", entry.ID), slog.String("type", "melodee"))
+
+		default:
+			logger.Warn("unknown scrobbler type", slog.String("id", entry.ID), slog.String("type", entry.Type))
+			continue
+		}
+
+		if s != nil {
+			mgr.Register(s)
+		}
+	}
+
+	if mgr.EnabledCount() == 0 && len(mgr.Scrobblers()) == 0 {
+		return nil
+	}
+
+	return mgr
 }
 
 func runDoctor(cfg *config.Config, logger *slog.Logger) {

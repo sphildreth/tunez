@@ -9,10 +9,12 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/tunez/tunez/internal/artwork"
 	"github.com/tunez/tunez/internal/config"
 	"github.com/tunez/tunez/internal/player"
 	"github.com/tunez/tunez/internal/provider"
 	"github.com/tunez/tunez/internal/queue"
+	"github.com/tunez/tunez/internal/scrobble"
 	"github.com/tunez/tunez/internal/ui"
 )
 
@@ -102,14 +104,16 @@ type StartupOptions struct {
 }
 
 type Model struct {
-	cfg        *config.Config
-	provider   provider.Provider
-	factory    ProviderFactory
-	player     *player.Controller
-	queue      *queue.Queue
-	queueStore *queue.PersistenceStore
-	theme      ui.Theme
-	logger     *slog.Logger
+	cfg          *config.Config
+	provider     provider.Provider
+	factory      ProviderFactory
+	player       *player.Controller
+	queue        *queue.Queue
+	queueStore   *queue.PersistenceStore
+	scrobbler    *scrobble.Manager
+	artworkCache *artwork.Cache
+	theme        ui.Theme
+	logger       *slog.Logger
 
 	screen          screen
 	focusedPane     pane // which pane has focus (nav or content)
@@ -152,6 +156,14 @@ type Model struct {
 	lyricsError        error
 	lyricsScrollOffset int
 	lyricsTrackID      string // track ID lyrics were fetched for
+
+	// Scrobble state (Phase 2)
+	scrobbled bool // true if current track has been scrobbled
+
+	// Artwork state (Phase 2)
+	artworkANSI    string // ANSI art for current track
+	artworkLoading bool
+	artworkTrackID string // track ID artwork was fetched for
 }
 
 type searchFilter int
@@ -175,7 +187,7 @@ func (f searchFilter) String() string {
 	}
 }
 
-func New(cfg *config.Config, prov provider.Provider, factory ProviderFactory, player *player.Controller, settings any, theme ui.Theme, opts StartupOptions, queueStore *queue.PersistenceStore, logger *slog.Logger) Model {
+func New(cfg *config.Config, prov provider.Provider, factory ProviderFactory, player *player.Controller, settings any, theme ui.Theme, opts StartupOptions, queueStore *queue.PersistenceStore, scrobbleMgr *scrobble.Manager, artCache *artwork.Cache, logger *slog.Logger) Model {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -186,6 +198,8 @@ func New(cfg *config.Config, prov provider.Provider, factory ProviderFactory, pl
 		player:          player,
 		queue:           queue.New(),
 		queueStore:      queueStore,
+		scrobbler:       scrobbleMgr,
+		artworkCache:    artCache,
 		theme:           theme,
 		logger:          logger,
 		screen:          screenLoading,
@@ -383,6 +397,57 @@ func (m Model) fetchLyricsCmd(trackID string) tea.Cmd {
 		defer cancel()
 		lyrics, err := m.provider.GetLyrics(ctx, trackID)
 		return lyricsMsg{trackID: trackID, lyrics: lyrics.Text, err: err}
+	}
+}
+
+// artworkMsg is the result of fetching artwork
+type artworkMsg struct {
+	trackID string
+	ansi    string
+	err     error
+}
+
+// fetchArtworkCmd fetches and converts artwork for a track
+func (m Model) fetchArtworkCmd(trackID, artworkRef string) tea.Cmd {
+	return func() tea.Msg {
+		if artworkRef == "" {
+			return artworkMsg{trackID: trackID, err: artwork.ErrNotFound}
+		}
+
+		width := m.cfg.Artwork.Width
+		if width <= 0 {
+			width = 20
+		}
+		height := width / 2 // Maintain aspect ratio for terminal
+
+		// Check cache first
+		if m.artworkCache != nil {
+			if cached, ok := m.artworkCache.Get(artworkRef, width); ok {
+				return artworkMsg{trackID: trackID, ansi: cached}
+			}
+		}
+
+		// Fetch artwork from provider
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		art, err := m.provider.GetArtwork(ctx, artworkRef, width*10) // Request larger for quality
+		if err != nil {
+			return artworkMsg{trackID: trackID, err: err}
+		}
+
+		// Convert to ANSI
+		ansi, err := artwork.ConvertToANSI(ctx, art.Data, width, height)
+		if err != nil {
+			return artworkMsg{trackID: trackID, err: err}
+		}
+
+		// Cache result
+		if m.artworkCache != nil {
+			_ = m.artworkCache.Set(artworkRef, width, ansi)
+		}
+
+		return artworkMsg{trackID: trackID, ansi: ansi}
 	}
 }
 
@@ -1141,10 +1206,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.logger.Debug("startup tracks added", slog.Int("queue_len", m.queue.Len()), slog.Int("current_idx", m.queue.CurrentIndex()))
 		m.status = fmt.Sprintf("Added %d tracks to queue", len(msg.tracks))
-		// If autoplay is enabled, play the first track
+		// If autoplay is enabled, play the first track and show Now Playing
 		if m.startupOpts.AutoPlay {
 			m.logger.Debug("auto-playing first track")
-			m.screen = screenQueue
+			m.screen = screenNowPlaying
 			m.focusedPane = paneContent
 			return m, m.playQueueTrackCmd(0)
 		}
@@ -1165,12 +1230,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.queue.Add(t)
 		}
 		m.status = fmt.Sprintf("Added %d random tracks to queue", len(msg.tracks))
-		m.screen = screenQueue
-		m.focusedPane = paneContent
 		// Only auto-play if --play was also given
 		if m.startupOpts.AutoPlay {
+			m.screen = screenNowPlaying
+			m.focusedPane = paneContent
 			return m, m.playQueueTrackCmd(0)
 		}
+		// Otherwise just show the queue
+		m.screen = screenQueue
+		m.focusedPane = paneContent
 		return m, nil
 	case playTrackMsg:
 		if msg.err != nil {
@@ -1181,15 +1249,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.nowPlaying = msg.track
 			m.paused = false
 			m.status = "Playing " + msg.track.Title
+			m.scrobbled = false // Reset scrobble state for new track
+
+			// Notify scrobblers of now playing
+			if m.scrobbler != nil && m.cfg.Scrobble.Enabled {
+				m.scrobbler.NowPlaying(context.Background(), scrobble.Track{
+					Title:      msg.track.Title,
+					Artist:     msg.track.ArtistName,
+					Album:      msg.track.AlbumTitle,
+					DurationMs: msg.track.DurationMs,
+					StartedAt:  time.Now(),
+					ProviderID: msg.track.ID,
+				})
+			}
+
+			// Build commands for async fetches
+			var cmds []tea.Cmd
+			caps := m.provider.Capabilities()
 
 			// Fetch lyrics for new track if provider supports it
-			caps := m.provider.Capabilities()
 			if caps[provider.CapLyrics] && msg.track.ID != m.lyricsTrackID {
 				m.lyrics = ""
 				m.lyricsLoading = true
 				m.lyricsError = nil
 				m.lyricsScrollOffset = 0
-				return m, m.fetchLyricsCmd(msg.track.ID)
+				cmds = append(cmds, m.fetchLyricsCmd(msg.track.ID))
+			}
+
+			// Fetch artwork for new track if enabled and provider supports it
+			if m.cfg.Artwork.Enabled && caps[provider.CapArtwork] && msg.track.ID != m.artworkTrackID && msg.track.ArtworkRef != "" {
+				m.artworkANSI = ""
+				m.artworkLoading = true
+				cmds = append(cmds, m.fetchArtworkCmd(msg.track.ID, msg.track.ArtworkRef))
+			}
+
+			if len(cmds) > 0 {
+				return m, tea.Batch(cmds...)
 			}
 		}
 	case lyricsMsg:
@@ -1203,6 +1298,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.lyrics = msg.lyrics
 				m.lyricsError = nil
+			}
+		}
+		return m, nil
+	case artworkMsg:
+		// Only update if this is for the current track
+		if msg.trackID == m.nowPlaying.ID {
+			m.artworkTrackID = msg.trackID
+			m.artworkLoading = false
+			if msg.err != nil {
+				m.artworkANSI = ""
+			} else {
+				m.artworkANSI = msg.ansi
 			}
 		}
 		return m, nil
@@ -1222,6 +1329,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Muted != nil {
 			m.muted = *msg.Muted
 		}
+
+		// Update scrobbler position and check if we should scrobble
+		if m.scrobbler != nil && m.cfg.Scrobble.Enabled && m.nowPlaying.ID != "" {
+			m.scrobbler.UpdatePosition(time.Duration(m.timePos*float64(time.Second)), m.paused)
+
+			// Scrobble if threshold met and not already scrobbled
+			if !m.scrobbled && m.scrobbler.ShouldScrobble() {
+				m.scrobbled = true
+				m.scrobbler.Scrobble(context.Background(), scrobble.Track{
+					Title:      m.nowPlaying.Title,
+					Artist:     m.nowPlaying.ArtistName,
+					Album:      m.nowPlaying.AlbumTitle,
+					DurationMs: m.nowPlaying.DurationMs,
+					StartedAt:  time.Now().Add(-time.Duration(m.timePos * float64(time.Second))),
+					ProviderID: m.nowPlaying.ID,
+				})
+				m.logger.Debug("scrobbled track", slog.String("title", m.nowPlaying.Title))
+			}
+		}
+
 		if msg.Err != nil {
 			return m.setError(msg.Err)
 		}
@@ -1597,7 +1724,7 @@ func (m Model) renderNowPlaying() string {
 			),
 		))
 	} else {
-		// Track info box
+		// Track info with optional artwork
 		trackInfo := lipgloss.JoinVertical(lipgloss.Left,
 			m.theme.Dim.Render("Track: ")+m.theme.Accent.Render(m.nowPlaying.Title),
 			m.theme.Dim.Render("Artist: ")+m.theme.Text.Render(m.nowPlaying.ArtistName),
@@ -1609,7 +1736,29 @@ func (m Model) renderNowPlaying() string {
 				m.theme.Dim.Render(fmt.Sprintf("Codec: %s  |  Bitrate: %dkbps", m.nowPlaying.Codec, m.nowPlaying.BitrateKbps)),
 			)
 		}
-		b.WriteString(boxStyle.Render(trackInfo))
+
+		// Render artwork alongside track info if available
+		if m.cfg.Artwork.Enabled {
+			artWidth := m.cfg.Artwork.Width
+			if artWidth <= 0 {
+				artWidth = 20
+			}
+			var artworkDisplay string
+			if m.artworkLoading {
+				artworkDisplay = artwork.Placeholder(artWidth, artWidth/2)
+			} else if m.artworkANSI != "" {
+				artworkDisplay = m.artworkANSI
+			} else {
+				artworkDisplay = artwork.Placeholder(artWidth, artWidth/2)
+			}
+
+			// Join artwork and track info horizontally
+			infoBox := boxStyle.Render(trackInfo)
+			combined := lipgloss.JoinHorizontal(lipgloss.Top, artworkDisplay+"  ", infoBox)
+			b.WriteString(combined)
+		} else {
+			b.WriteString(boxStyle.Render(trackInfo))
+		}
 		b.WriteString("\n\n")
 
 		// Visual progress bar

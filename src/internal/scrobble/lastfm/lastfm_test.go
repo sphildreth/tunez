@@ -65,7 +65,7 @@ func TestShouldScrobble(t *testing.T) {
 	}
 
 	// Long track, less than 4 minutes and less than 50%
-	_ = s.NowPlaying(nil, longTrack) // Reset
+	_ = s.NowPlaying(nil, longTrack)       // Reset
 	s.UpdatePosition(3*time.Minute, false) // 30%
 	if s.ShouldScrobble() {
 		t.Error("expected false at 3 minutes / 30%")

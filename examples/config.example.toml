@@ -4,7 +4,7 @@ active_profile = "home-files"
 [ui]
 page_size = 100
 no_emoji = false
-theme = "rainbow"
+theme = "rainbow"              # rainbow | mono | green | nocolor
 
 [player]
 mpv_path = "mpv"
@@ -12,6 +12,53 @@ ipc = "auto"
 initial_volume = 70
 cache_secs = 30
 network_timeout_ms = 8000
+seek_small_seconds = 5
+seek_large_seconds = 30
+volume_step = 5
+
+[queue]
+persist = true                 # Save queue across restarts
+
+[artwork]
+enabled = true                 # Show album artwork in Now Playing
+width = 20                     # Artwork width in characters
+cache_days = 30                # Days to cache converted ANSI artwork
+
+[scrobble]
+enabled = false                # Master switch for all scrobblers
+
+# Uncomment and configure to enable Last.fm scrobbling
+# [[scrobblers]]
+# id = "lastfm"
+# type = "lastfm"
+# enabled = true
+# [scrobblers.settings]
+# api_key = "your_lastfm_api_key"
+# api_secret = "your_lastfm_api_secret"
+# session_key = "your_session_key"
+
+# Uncomment to enable Melodee native scrobbling (reuses provider auth)
+# [[scrobblers]]
+# id = "melodee"
+# type = "melodee"
+# enabled = true
+# [scrobblers.settings]
+# provider = "melodee-home"    # Reuse auth from this provider profile
+
+[keybindings]
+play_pause = "space"
+next_track = "n"
+prev_track = "p"
+seek_forward = "l"
+seek_backward = "h"
+volume_up = "+"
+volume_down = "-"
+mute = "m"
+shuffle = "s"
+repeat = "r"
+search = "/"
+help = "?"
+quit = "ctrl+c"
 
 [[profiles]]
 id = "home-files"
@@ -28,7 +75,7 @@ scan_on_start = true
 id = "melodee-home"
 name = "Melodee (Home)"
 provider = "melodee"
-enabled = true
+enabled = false                # Set to true and configure to enable
 
 [profiles.settings]
 base_url = "https://music.example.com"
