@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"net"
 	"os"
 	"os/exec"
@@ -118,24 +119,37 @@ func (c *Controller) connect(ctx context.Context) error {
 	}
 	var conn net.Conn
 	var err error
-	for i := 0; i < 10; i++ {
+	baseDelay := 50 * time.Millisecond
+	maxDelay := 500 * time.Millisecond
+	maxRetries := 10
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+
+	for i := 0; i < maxRetries; i++ {
 		conn, err = dial(ctx, networkForPath(c.opts.IPCPath), c.opts.IPCPath)
 		if err == nil {
-			break
+			c.conn = conn
+			return nil
 		}
-		time.Sleep(100 * time.Millisecond)
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("connect mpv ipc: %w", ctx.Err())
+		default:
+		}
+
+		if i < maxRetries-1 {
+			delay := baseDelay * time.Duration(1<<uint(i))
+			if delay > maxDelay {
+				delay = maxDelay
+			}
+			jitter := time.Duration(float64(delay) * 0.2 * rng.Float64())
+			time.Sleep(delay + jitter)
+		}
 	}
-	if err != nil {
-		return fmt.Errorf("connect mpv ipc: %w", err)
-	}
-	c.conn = conn
-	return nil
+	return fmt.Errorf("connect mpv ipc: %w", err)
 }
 
 func networkForPath(path string) string {
-	if runtime.GOOS == "windows" {
-		return "unix"
-	}
 	return "unix"
 }
 

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -38,6 +39,22 @@ func NewPersistenceStore(dbPath string) (*PersistenceStore, error) {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open queue db: %w", err)
+	}
+
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		slog.Warn("queue persistence: set journal_mode", "err", err)
+	}
+	if _, err := db.Exec("PRAGMA synchronous=NORMAL"); err != nil {
+		slog.Warn("queue persistence: set synchronous", "err", err)
+	}
+	if _, err := db.Exec("PRAGMA cache_size=-32000"); err != nil {
+		slog.Warn("queue persistence: set cache_size", "err", err)
+	}
+	if _, err := db.Exec("PRAGMA temp_store=MEMORY"); err != nil {
+		slog.Warn("queue persistence: set temp_store", "err", err)
+	}
+	if _, err := db.Exec("PRAGMA mmap_size=268435456"); err != nil {
+		slog.Warn("queue persistence: set mmap_size", "err", err)
 	}
 
 	store := &PersistenceStore{db: db}

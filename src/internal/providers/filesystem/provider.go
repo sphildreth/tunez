@@ -7,11 +7,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/dhowden/tag"
 	"github.com/tunez/tunez/internal/logging"
@@ -71,6 +74,25 @@ func (p *Provider) Initialize(ctx context.Context, profileCfg any) error {
 		return fmt.Errorf("open index db: %w", err)
 	}
 	p.db = db
+
+	// Performance optimizations
+	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+		// Non-fatal, but good to know
+		slog.Warn("Failed to set WAL mode", "err", err)
+	}
+	if _, err := db.Exec("PRAGMA synchronous=NORMAL"); err != nil {
+		slog.Warn("Failed to set synchronous=NORMAL", "err", err)
+	}
+	if _, err := db.Exec("PRAGMA cache_size=-64000"); err != nil {
+		slog.Warn("Failed to set cache_size", "err", err)
+	}
+	if _, err := db.Exec("PRAGMA temp_store=MEMORY"); err != nil {
+		slog.Warn("Failed to set temp_store", "err", err)
+	}
+	if _, err := db.Exec("PRAGMA mmap_size=268435456"); err != nil {
+		slog.Warn("Failed to set mmap_size", "err", err)
+	}
+
 	if err := p.ensureSchema(ctx); err != nil {
 		return err
 	}
@@ -147,6 +169,10 @@ func (p *Provider) ensureSchema(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album_id, disc_number, track_number);`,
 		`CREATE INDEX IF NOT EXISTS idx_albums_artist ON albums(artist_id, year, title);`,
 		`CREATE INDEX IF NOT EXISTS idx_artists_sort ON artists(sort_name);`,
+		`CREATE INDEX IF NOT EXISTS idx_tracks_title ON tracks(title);`,
+		`CREATE INDEX IF NOT EXISTS idx_tracks_artist_name ON tracks(artist_name);`,
+		`CREATE INDEX IF NOT EXISTS idx_tracks_album_title ON tracks(album_title);`,
+		`CREATE INDEX IF NOT EXISTS idx_tracks_file_path ON tracks(file_path);`,
 	}
 	for _, stmt := range schema {
 		if _, err := p.db.ExecContext(ctx, stmt); err != nil {
@@ -236,83 +262,240 @@ func parseYearValue(v any) int {
 	return 0
 }
 
-func (p *Provider) scan(ctx context.Context) error {
-	tx, err := p.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM tracks; DELETE FROM albums; DELETE FROM artists;`); err != nil {
-		return fmt.Errorf("clear tables: %w", err)
-	}
-	insertArtist, _ := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO artists(id,name,sort_name) VALUES(?,?,?)`)
-	insertAlbum, _ := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO albums(id,artist_id,title,year,artwork_path) VALUES(?,?,?,?,?)`)
-	insertTrack, _ := tx.PrepareContext(ctx, `INSERT OR REPLACE INTO tracks(id,album_id,artist_id,title,album_title,artist_name,year,track_number,disc_number,duration_ms,file_path,file_size,file_mtime,codec,bitrate) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+// trackInfo holds extracted metadata for a track
+type trackInfo struct {
+	Path        string
+	Size        int64
+	Mtime       int64
+	ArtistName  string
+	AlbumTitle  string
+	TrackTitle  string
+	TrackNo     int
+	DiscNo      int
+	Year        int
+	DurationMs  int
+	BitrateKbps int
+	Codec       string
+}
 
-	scanned := 0
+func (p *Provider) scan(ctx context.Context) error {
+	// 1. Load existing tracks for incremental scan
+	existing := make(map[string]struct {
+		mtime int64
+		size  int64
+	})
+	rows, err := p.db.QueryContext(ctx, "SELECT file_path, file_mtime, file_size FROM tracks")
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var path string
+			var mtime, size int64
+			if err := rows.Scan(&path, &mtime, &size); err == nil {
+				existing[path] = struct{ mtime, size int64 }{mtime, size}
+			}
+		}
+	}
+
+	// 2. Setup worker pool
+	jobs := make(chan string, 100)
+	results := make(chan *trackInfo, 100)
+	var wg sync.WaitGroup
+
+	// Start workers
+	numWorkers := runtime.NumCPU()
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for path := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+
+				info, err := os.Stat(path)
+				if err != nil {
+					continue
+				}
+
+				// Check if unchanged
+				if e, ok := existing[path]; ok {
+					if e.mtime == info.ModTime().Unix() && e.size == info.Size() {
+						// Signal unchanged by sending nil info but with path?
+						// Or just send the path to mark as seen.
+						// We'll use a special struct or just re-emit the existing data?
+						// Re-emitting existing data is safest but requires querying it.
+						// Since we only have mtime/size in memory, we can't re-emit.
+						// We should just signal "unchanged" so the collector knows to keep it.
+						results <- &trackInfo{Path: path, Mtime: -1} // Mtime -1 indicates unchanged
+						continue
+					}
+				}
+
+				// Process new/changed file
+				ti, err := p.processFile(path, info)
+				if err != nil {
+					continue
+				}
+				results <- ti
+			}
+		}()
+	}
+
+	// 3. Start collector (database writer)
+	errChan := make(chan error, 1)
+	doneChan := make(chan struct{})
+
+	go func() {
+		defer close(doneChan)
+
+		tx, err := p.db.BeginTx(ctx, nil)
+		if err != nil {
+			errChan <- err
+			return
+		}
+		defer tx.Rollback()
+
+		insertArtist, _ := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO artists(id,name,sort_name) VALUES(?,?,?)`)
+		insertAlbum, _ := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO albums(id,artist_id,title,year,artwork_path) VALUES(?,?,?,?,?)`)
+		insertTrack, _ := tx.PrepareContext(ctx, `INSERT OR REPLACE INTO tracks(id,album_id,artist_id,title,album_title,artist_name,year,track_number,disc_number,duration_ms,file_path,file_size,file_mtime,codec,bitrate) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+
+		seenPaths := make(map[string]bool)
+		batchSize := 100
+		count := 0
+		scanned := 0
+
+		for ti := range results {
+			seenPaths[ti.Path] = true
+			scanned++
+			if p.cfg.ScanProgress != nil && scanned%10 == 0 {
+				p.cfg.ScanProgress(scanned, ti.Path)
+			}
+
+			if ti.Mtime == -1 {
+				// Unchanged, nothing to update in DB
+				continue
+			}
+
+			// Insert/Update logic
+			artistID := hash(strings.ToLower(ti.ArtistName))
+			albumID := hash(artistID, strings.ToLower(ti.AlbumTitle))
+			trackID := hash(ti.Path)
+
+			if _, err := insertArtist.ExecContext(ctx, artistID, ti.ArtistName, strings.ToLower(ti.ArtistName)); err != nil {
+				continue
+			}
+			if _, err := insertAlbum.ExecContext(ctx, albumID, artistID, ti.AlbumTitle, 0, ""); err != nil {
+				continue
+			}
+			if _, err := insertTrack.ExecContext(ctx, trackID, albumID, artistID, ti.TrackTitle, ti.AlbumTitle, ti.ArtistName, ti.Year, ti.TrackNo, ti.DiscNo, ti.DurationMs, ti.Path, ti.Size, ti.Mtime, ti.Codec, ti.BitrateKbps); err != nil {
+				continue
+			}
+
+			count++
+			if count >= batchSize {
+				if err := tx.Commit(); err != nil {
+					errChan <- err
+					return
+				}
+				// Start new transaction
+				tx, err = p.db.BeginTx(ctx, nil)
+				if err != nil {
+					errChan <- err
+					return
+				}
+				insertArtist, _ = tx.PrepareContext(ctx, `INSERT OR IGNORE INTO artists(id,name,sort_name) VALUES(?,?,?)`)
+				insertAlbum, _ = tx.PrepareContext(ctx, `INSERT OR IGNORE INTO albums(id,artist_id,title,year,artwork_path) VALUES(?,?,?,?,?)`)
+				insertTrack, _ = tx.PrepareContext(ctx, `INSERT OR REPLACE INTO tracks(id,album_id,artist_id,title,album_title,artist_name,year,track_number,disc_number,duration_ms,file_path,file_size,file_mtime,codec,bitrate) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+				count = 0
+			}
+		}
+
+		// Cleanup deleted files
+		for path := range existing {
+			if !seenPaths[path] {
+				// File no longer exists or wasn't scanned
+				_, _ = tx.ExecContext(ctx, "DELETE FROM tracks WHERE file_path = ?", path)
+			}
+		}
+
+		if err := tx.Commit(); err != nil {
+			errChan <- err
+			return
+		}
+		errChan <- nil
+	}()
+
+	// 4. Walk directories and feed jobs
 	for _, root := range p.cfg.Roots {
 		filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return nil
-			}
-			if d.IsDir() {
+			if err != nil || d.IsDir() {
 				return nil
 			}
 			if !allowedExtensions[strings.ToLower(filepath.Ext(path))] {
 				return nil
 			}
-			info, err := d.Info()
-			if err != nil {
-				return nil
+			select {
+			case jobs <- path:
+			case <-ctx.Done():
+				return ctx.Err()
 			}
-			// Report progress
-			scanned++
-			if p.cfg.ScanProgress != nil {
-				p.cfg.ScanProgress(scanned, path)
-			}
-			f, err := os.Open(path)
-			if err != nil {
-				return nil
-			}
-			defer f.Close()
-			meta, err := tag.ReadFrom(f)
-			var artistName, albumTitle, trackTitle string
-			var trackNo, discNo, trackYear int
-			if err == nil {
-				artistName = meta.Artist()
-				albumTitle = meta.Album()
-				trackTitle = meta.Title()
-				trackNo, _ = meta.Track()
-				discNo, _ = meta.Disc()
-				trackYear = extractYear(meta)
-			}
-			if artistName == "" {
-				artistName = "Unknown Artist"
-			}
-			if albumTitle == "" {
-				albumTitle = filepath.Base(filepath.Dir(path))
-				if albumTitle == "." || albumTitle == "/" {
-					albumTitle = "Unknown Album"
-				}
-			}
-			if trackTitle == "" {
-				trackTitle = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
-			}
-			artistID := hash(strings.ToLower(artistName))
-			albumID := hash(artistID, strings.ToLower(albumTitle))
-			trackID := hash(path)
-			_, _ = insertArtist.ExecContext(ctx, artistID, artistName, strings.ToLower(artistName))
-			_, _ = insertAlbum.ExecContext(ctx, albumID, artistID, albumTitle, 0, "")
-			// Get audio metadata via ffprobe
-			audioInfo := getAudioInfo(path)
-			_, _ = insertTrack.ExecContext(ctx, trackID, albumID, artistID, trackTitle, albumTitle, artistName, trackYear, trackNo, discNo, audioInfo.DurationMs, path, info.Size(), info.ModTime().Unix(), audioInfo.Codec, audioInfo.BitrateKbps)
 			return nil
 		})
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit scan: %w", err)
+	close(jobs)
+	wg.Wait()
+	close(results)
+
+	// Wait for collector
+	if err := <-errChan; err != nil {
+		return err
 	}
 	return nil
+}
+
+func (p *Provider) processFile(path string, info os.FileInfo) (*trackInfo, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	ti := &trackInfo{
+		Path:  path,
+		Size:  info.Size(),
+		Mtime: info.ModTime().Unix(),
+	}
+
+	meta, err := tag.ReadFrom(f)
+	if err == nil {
+		ti.ArtistName = meta.Artist()
+		ti.AlbumTitle = meta.Album()
+		ti.TrackTitle = meta.Title()
+		ti.TrackNo, _ = meta.Track()
+		ti.DiscNo, _ = meta.Disc()
+		ti.Year = extractYear(meta)
+	}
+
+	if ti.ArtistName == "" {
+		ti.ArtistName = "Unknown Artist"
+	}
+	if ti.AlbumTitle == "" {
+		ti.AlbumTitle = filepath.Base(filepath.Dir(path))
+		if ti.AlbumTitle == "." || ti.AlbumTitle == "/" {
+			ti.AlbumTitle = "Unknown Album"
+		}
+	}
+	if ti.TrackTitle == "" {
+		ti.TrackTitle = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	}
+
+	// Get audio metadata
+	audioInfo := getAudioInfo(path)
+	ti.DurationMs = audioInfo.DurationMs
+	ti.Codec = audioInfo.Codec
+	ti.BitrateKbps = audioInfo.BitrateKbps
+
+	return ti, nil
 }
 
 func (p *Provider) Health(ctx context.Context) (bool, string) {

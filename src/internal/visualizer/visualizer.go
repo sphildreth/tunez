@@ -97,8 +97,16 @@ func (v *Visualizer) Start(ctx context.Context) error {
 	go func() {
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
-			line := scanner.Text()
-			v.parseLine(line)
+			select {
+			case <-ctx.Done():
+				v.mu.Lock()
+				v.running = false
+				v.mu.Unlock()
+				return
+			default:
+				line := scanner.Text()
+				v.parseLine(line)
+			}
 		}
 		v.mu.Lock()
 		v.running = false

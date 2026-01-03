@@ -39,6 +39,7 @@ type Scrobbler interface {
 type Manager struct {
 	mu         sync.RWMutex
 	scrobblers []Scrobbler
+	wg         sync.WaitGroup
 }
 
 // NewManager creates a new scrobbler manager.
@@ -85,7 +86,9 @@ func (m *Manager) NowPlaying(ctx context.Context, track Track) {
 	for _, s := range scrobblers {
 		if s.IsEnabled() {
 			// Fire and forget - don't block on network
+			m.wg.Add(1)
 			go func(scrobbler Scrobbler) {
+				defer m.wg.Done()
 				_ = scrobbler.NowPlaying(ctx, track)
 			}(s)
 		}
@@ -100,9 +103,27 @@ func (m *Manager) Scrobble(ctx context.Context, track Track) {
 
 	for _, s := range scrobblers {
 		// Call on all scrobblers - they handle queueing if not enabled
+		m.wg.Add(1)
 		go func(scrobbler Scrobbler) {
+			defer m.wg.Done()
 			_ = scrobbler.Scrobble(ctx, track)
 		}(s)
+	}
+}
+
+// Wait blocks until all in-flight scrobble operations complete or the context is canceled.
+func (m *Manager) Wait(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		m.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 

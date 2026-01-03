@@ -17,14 +17,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	lru "github.com/hashicorp/golang-lru/v2"
 )
 
 //go:embed default_artwork.png
 var defaultArtworkPNG []byte
 
 var (
-	defaultArtworkCache   = make(map[string]string)
-	defaultArtworkCacheMu sync.RWMutex
+	defaultArtworkCacheOnce sync.Once
+	defaultArtworkCache     *lru.Cache[string, string]
+	defaultArtworkCacheMu   sync.Mutex
 )
 
 var (
@@ -320,12 +323,16 @@ func DefaultArtwork(width, height int) string {
 	key := fmt.Sprintf("%d:%d", width, height)
 
 	// Check cache
-	defaultArtworkCacheMu.RLock()
-	if cached, ok := defaultArtworkCache[key]; ok {
-		defaultArtworkCacheMu.RUnlock()
+	defaultArtworkCacheOnce.Do(func() {
+		cache, _ := lru.New[string, string](64)
+		defaultArtworkCache = cache
+	})
+	defaultArtworkCacheMu.Lock()
+	if cached, ok := defaultArtworkCache.Get(key); ok {
+		defaultArtworkCacheMu.Unlock()
 		return cached
 	}
-	defaultArtworkCacheMu.RUnlock()
+	defaultArtworkCacheMu.Unlock()
 
 	// Convert embedded PNG to ANSI
 	result, err := ConvertToANSI(context.Background(), defaultArtworkPNG, width, height)
@@ -336,7 +343,7 @@ func DefaultArtwork(width, height int) string {
 
 	// Cache result
 	defaultArtworkCacheMu.Lock()
-	defaultArtworkCache[key] = result
+	defaultArtworkCache.Add(key, result)
 	defaultArtworkCacheMu.Unlock()
 
 	return result

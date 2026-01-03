@@ -153,6 +153,11 @@ Examples:
 			}
 			// Save pending scrobbles on shutdown
 			defer func() {
+				waitCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := scrobbleMgr.Wait(waitCtx); err != nil {
+					logger.Warn("pending scrobbles not flushed", slog.Any("err", err))
+				}
 				if err := scrobbleMgr.SavePending(); err != nil {
 					logger.Warn("failed to save pending scrobbles", slog.Any("err", err))
 				}

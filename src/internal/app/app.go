@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"path/filepath"
 	"strings"
 	"time"
@@ -611,11 +612,10 @@ func (m Model) randomPlayCmd() tea.Cmd {
 			return randomPlayMsg{err: fmt.Errorf("no tracks found")}
 		}
 
-		// Shuffle using Fisher-Yates
-		for i := len(tracks) - 1; i > 0; i-- {
-			j := int(time.Now().UnixNano()) % (i + 1)
+		// Shuffle using rand.Shuffle
+		rand.Shuffle(len(tracks), func(i, j int) {
 			tracks[i], tracks[j] = tracks[j], tracks[i]
-		}
+		})
 
 		// Take only pageSize tracks
 		if len(tracks) > pageSize {
