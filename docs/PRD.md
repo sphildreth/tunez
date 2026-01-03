@@ -10,7 +10,7 @@
 
 Use these checkboxes to track implementation status.
 
-- [ ] **Phase 1 (MVP)**
+- [x] **Phase 1 (MVP)**
   - Player: mpv playback via IPC (play/pause/seek/next/prev/volume)
   - Providers: Filesystem + Melodee (browse/search/play)
   - TUI: implement the core screens from `docs/TUI_UX.md`:
