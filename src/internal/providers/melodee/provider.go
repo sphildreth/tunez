@@ -44,6 +44,13 @@ func New() *Provider {
 func (p *Provider) ID() string   { return "melodee" }
 func (p *Provider) Name() string { return "Melodee" }
 
+// Token returns the current auth token for use by scrobblers.
+// Implements melodee.TokenProvider interface.
+func (p *Provider) Token() string { return p.token }
+
+// BaseURL returns the configured base URL for the Melodee API.
+func (p *Provider) BaseURL() string { return p.cfg.BaseURL }
+
 func (p *Provider) Capabilities() provider.Capabilities { return p.caps }
 
 func (p *Provider) Initialize(ctx context.Context, profileCfg any) error {
@@ -260,11 +267,44 @@ func (p *Provider) GetStream(ctx context.Context, trackId string) (provider.Stre
 }
 
 func (p *Provider) GetLyrics(ctx context.Context, trackId string) (provider.Lyrics, error) {
-	_, err := p.GetTrack(ctx, trackId)
+	// Fetch the song details which may include lyrics
+	u := p.cfg.BaseURL + "/api/v1/songs/" + url.PathEscape(trackId)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return provider.Lyrics{}, err
 	}
-	return provider.Lyrics{}, provider.ErrNotSupported
+
+	resp, err := p.doRequest(req)
+	if err != nil {
+		return provider.Lyrics{}, mapHTTPError(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return provider.Lyrics{}, provider.ErrUnauthorized
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return provider.Lyrics{}, provider.ErrNotFound
+	}
+	if resp.StatusCode >= 400 {
+		return provider.Lyrics{}, fmt.Errorf("http status %d", resp.StatusCode)
+	}
+
+	// Parse the response to get lyrics
+	var songData struct {
+		ID     string `json:"id"`
+		Title  string `json:"title"`
+		Lyrics string `json:"lyrics"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&songData); err != nil {
+		return provider.Lyrics{}, err
+	}
+
+	if songData.Lyrics == "" {
+		return provider.Lyrics{}, provider.ErrNotFound
+	}
+
+	return provider.Lyrics{Text: songData.Lyrics}, nil
 }
 
 func (p *Provider) GetArtwork(ctx context.Context, ref string, sizePx int) (provider.Artwork, error) {

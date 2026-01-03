@@ -49,7 +49,9 @@ func (p *Provider) ID() string   { return "filesystem" }
 func (p *Provider) Name() string { return "Filesystem" }
 
 func (p *Provider) Capabilities() provider.Capabilities {
-	return provider.Capabilities{}
+	return provider.Capabilities{
+		provider.CapLyrics: true,
+	}
 }
 
 func (p *Provider) Initialize(ctx context.Context, profileCfg any) error {
@@ -62,7 +64,7 @@ func (p *Provider) Initialize(ctx context.Context, profileCfg any) error {
 		return err
 	}
 	p.cfg = cfg
-	
+
 	db, err := sql.Open("sqlite", cfg.IndexDB)
 	if err != nil {
 		return fmt.Errorf("open index db: %w", err)
@@ -504,7 +506,78 @@ func (p *Provider) GetStream(ctx context.Context, trackId string) (provider.Stre
 }
 
 func (p *Provider) GetLyrics(ctx context.Context, trackId string) (provider.Lyrics, error) {
-	return provider.Lyrics{}, provider.ErrNotSupported
+	// Get file path for track
+	var filePath string
+	err := p.db.QueryRowContext(ctx, `SELECT file_path FROM tracks WHERE id=?`, trackId).Scan(&filePath)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return provider.Lyrics{}, provider.ErrNotFound
+		}
+		return provider.Lyrics{}, err
+	}
+
+	// Try embedded lyrics from ID3 tags first
+	lyrics, err := extractEmbeddedLyrics(filePath)
+	if err == nil && lyrics != "" {
+		return provider.Lyrics{Text: lyrics}, nil
+	}
+
+	// Try .lrc sidecar file
+	lrcPath := strings.TrimSuffix(filePath, filepath.Ext(filePath)) + ".lrc"
+	if lrcData, err := os.ReadFile(lrcPath); err == nil {
+		return provider.Lyrics{Text: string(lrcData)}, nil
+	}
+
+	// Try .txt sidecar file
+	txtPath := strings.TrimSuffix(filePath, filepath.Ext(filePath)) + ".txt"
+	if txtData, err := os.ReadFile(txtPath); err == nil {
+		return provider.Lyrics{Text: string(txtData)}, nil
+	}
+
+	return provider.Lyrics{}, provider.ErrNotFound
+}
+
+// extractEmbeddedLyrics reads lyrics from ID3v2 USLT frame or similar tags.
+func extractEmbeddedLyrics(filePath string) (string, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	meta, err := tag.ReadFrom(f)
+	if err != nil {
+		return "", err
+	}
+
+	// The tag library provides access to raw frames
+	raw := meta.Raw()
+	if raw == nil {
+		return "", fmt.Errorf("no raw tags")
+	}
+
+	// Check for USLT (Unsynchronized Lyrics) frame - ID3v2
+	if uslt, ok := raw["USLT"]; ok {
+		if s, ok := uslt.(string); ok && s != "" {
+			return s, nil
+		}
+	}
+
+	// Check for LYRICS tag (common in Vorbis comments)
+	if lyrics, ok := raw["LYRICS"]; ok {
+		if s, ok := lyrics.(string); ok && s != "" {
+			return s, nil
+		}
+	}
+
+	// Check for UNSYNCEDLYRICS (Vorbis)
+	if lyrics, ok := raw["UNSYNCEDLYRICS"]; ok {
+		if s, ok := lyrics.(string); ok && s != "" {
+			return s, nil
+		}
+	}
+
+	return "", fmt.Errorf("no lyrics tag found")
 }
 
 func (p *Provider) GetArtwork(ctx context.Context, ref string, sizePx int) (provider.Artwork, error) {
@@ -534,8 +607,8 @@ func getDurationMs(path string) int {
 
 // audioInfo holds metadata extracted from ffprobe
 type audioInfo struct {
-	DurationMs int
-	Codec      string
+	DurationMs  int
+	Codec       string
 	BitrateKbps int
 }
 
@@ -546,7 +619,7 @@ func getAudioInfo(path string) audioInfo {
 	if err != nil {
 		return audioInfo{}
 	}
-	
+
 	var result struct {
 		Format struct {
 			Duration string `json:"duration"`
@@ -557,27 +630,27 @@ func getAudioInfo(path string) audioInfo {
 			CodecType string `json:"codec_type"`
 		} `json:"streams"`
 	}
-	
+
 	if err := json.Unmarshal(out, &result); err != nil {
 		return audioInfo{}
 	}
-	
+
 	info := audioInfo{}
-	
+
 	// Duration
 	if result.Format.Duration != "" {
 		var secs float64
 		fmt.Sscanf(result.Format.Duration, "%f", &secs)
 		info.DurationMs = int(secs * 1000)
 	}
-	
+
 	// Bitrate (convert from bps to kbps)
 	if result.Format.BitRate != "" {
 		var bps int
 		fmt.Sscanf(result.Format.BitRate, "%d", &bps)
 		info.BitrateKbps = bps / 1000
 	}
-	
+
 	// Codec - find the audio stream
 	for _, s := range result.Streams {
 		if s.CodecType == "audio" && s.CodecName != "" {
@@ -585,6 +658,6 @@ func getAudioInfo(path string) audioInfo {
 			break
 		}
 	}
-	
+
 	return info
 }

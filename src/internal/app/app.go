@@ -38,12 +38,12 @@ const (
 
 // Layout styles
 var (
-	borderColor       = lipgloss.Color("#7C7CFF")
-	focusBorderColor  = lipgloss.Color("#FF6FF7")
-	accentColor       = lipgloss.Color("#FF6FF7")
-	dimColor          = lipgloss.Color("#6C6F93")
-	titleColor        = lipgloss.Color("#8EEBFF")
-	highlightColor    = lipgloss.Color("#FFA7C4")
+	borderColor      = lipgloss.Color("#7C7CFF")
+	focusBorderColor = lipgloss.Color("#FF6FF7")
+	accentColor      = lipgloss.Color("#FF6FF7")
+	dimColor         = lipgloss.Color("#6C6F93")
+	titleColor       = lipgloss.Color("#8EEBFF")
+	highlightColor   = lipgloss.Color("#FFA7C4")
 
 	topBarStyle = lipgloss.NewStyle().
 			BorderStyle(lipgloss.NormalBorder()).
@@ -102,13 +102,14 @@ type StartupOptions struct {
 }
 
 type Model struct {
-	cfg      *config.Config
-	provider provider.Provider
-	factory  ProviderFactory
-	player   *player.Controller
-	queue    *queue.Queue
-	theme    ui.Theme
-	logger   *slog.Logger
+	cfg        *config.Config
+	provider   provider.Provider
+	factory    ProviderFactory
+	player     *player.Controller
+	queue      *queue.Queue
+	queueStore *queue.PersistenceStore
+	theme      ui.Theme
+	logger     *slog.Logger
 
 	screen          screen
 	focusedPane     pane // which pane has focus (nav or content)
@@ -144,6 +145,13 @@ type Model struct {
 	healthDetails   string
 	startupOpts     StartupOptions
 	startupDone     bool // true after startup search/play is complete
+
+	// Lyrics state (Phase 2)
+	lyrics             string
+	lyricsLoading      bool
+	lyricsError        error
+	lyricsScrollOffset int
+	lyricsTrackID      string // track ID lyrics were fetched for
 }
 
 type searchFilter int
@@ -167,7 +175,7 @@ func (f searchFilter) String() string {
 	}
 }
 
-func New(cfg *config.Config, prov provider.Provider, factory ProviderFactory, player *player.Controller, settings any, theme ui.Theme, opts StartupOptions, logger *slog.Logger) Model {
+func New(cfg *config.Config, prov provider.Provider, factory ProviderFactory, player *player.Controller, settings any, theme ui.Theme, opts StartupOptions, queueStore *queue.PersistenceStore, logger *slog.Logger) Model {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -177,6 +185,7 @@ func New(cfg *config.Config, prov provider.Provider, factory ProviderFactory, pl
 		factory:         factory,
 		player:          player,
 		queue:           queue.New(),
+		queueStore:      queueStore,
 		theme:           theme,
 		logger:          logger,
 		screen:          screenLoading,
@@ -199,8 +208,42 @@ type healthMsg struct {
 	details string
 }
 
+// queueRestoredMsg signals that the queue was restored from persistence.
+type queueRestoredMsg struct {
+	result queue.LoadResult
+	err    error
+}
+
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.initProviderCmd(), m.watchPlayerCmd(), m.healthCheckCmd())
+	cmds := []tea.Cmd{m.initProviderCmd(), m.watchPlayerCmd(), m.healthCheckCmd()}
+	// Restore queue if persistence is enabled
+	if m.cfg.Queue.Persist && m.queueStore != nil {
+		cmds = append(cmds, m.restoreQueueCmd())
+	}
+	return tea.Batch(cmds...)
+}
+
+// restoreQueueCmd loads the queue from persistence storage.
+func (m Model) restoreQueueCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		result, err := m.queueStore.Load(ctx)
+		return queueRestoredMsg{result: result, err: err}
+	}
+}
+
+// saveQueueCmd saves the queue to persistence storage.
+func (m Model) saveQueueCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.queueStore == nil || !m.cfg.Queue.Persist {
+			return nil
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = m.queueStore.Save(ctx, m.queue, m.provider.ID(), m.cfg.ActiveProfile)
+		return nil
+	}
 }
 
 func (m Model) healthCheckCmd() tea.Cmd {
@@ -324,6 +367,23 @@ type playerMsg player.Event
 type playTrackMsg struct {
 	track provider.Track
 	err   error
+}
+
+// lyricsMsg is the result of fetching lyrics
+type lyricsMsg struct {
+	trackID string
+	lyrics  string
+	err     error
+}
+
+// fetchLyricsCmd fetches lyrics for a track
+func (m Model) fetchLyricsCmd(trackID string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		lyrics, err := m.provider.GetLyrics(ctx, trackID)
+		return lyricsMsg{trackID: trackID, lyrics: lyrics.Text, err: err}
+	}
 }
 
 type searchMoreMsg struct {
@@ -568,6 +628,36 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.healthOK = msg.ok
 		m.healthDetails = msg.details
 		return m, m.healthCheckCmd() // Schedule next check
+	case queueRestoredMsg:
+		if msg.err != nil {
+			m.logger.Debug("queue restore failed", slog.Any("err", msg.err))
+			return m, nil
+		}
+		// Only restore if profile matches
+		if msg.result.ProfileID != "" && msg.result.ProfileID != m.cfg.ActiveProfile {
+			m.logger.Debug("queue profile mismatch, not restoring",
+				slog.String("saved_profile", msg.result.ProfileID),
+				slog.String("active_profile", m.cfg.ActiveProfile))
+			return m, nil
+		}
+		if len(msg.result.Tracks) > 0 {
+			m.queue.Add(msg.result.Tracks...)
+			if msg.result.CurrentIndex >= 0 && msg.result.CurrentIndex < len(msg.result.Tracks) {
+				_ = m.queue.SetCurrent(msg.result.CurrentIndex)
+			}
+			// Restore shuffle/repeat state
+			if msg.result.Shuffled && !m.queue.IsShuffled() {
+				m.queue.ToggleShuffle()
+			}
+			for m.queue.RepeatMode() != msg.result.Repeat {
+				m.queue.CycleRepeat()
+			}
+			m.status = fmt.Sprintf("Restored %d tracks", len(msg.result.Tracks))
+			m.logger.Debug("queue restored",
+				slog.Int("tracks", len(msg.result.Tracks)),
+				slog.Int("current_idx", msg.result.CurrentIndex))
+		}
+		return m, nil
 	case seekMsg:
 		if msg.err != nil {
 			return m.setError(msg.err)
@@ -576,17 +666,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case addTrackMsg:
 		m.queue.Add(msg.track)
 		m.status = "Added to queue: " + msg.track.Title
-		return m, nil
+		return m, m.saveQueueCmd()
 	case addNextTrackMsg:
 		m.queue.AddNext(msg.track)
 		m.status = "Playing next: " + msg.track.Title
-		return m, nil
+		return m, m.saveQueueCmd()
 	case addAndPlayTrackMsg:
 		// Add to queue and play - used for library/search selections
 		m.logger.Debug("add and play track", slog.String("track_id", msg.track.ID), slog.String("title", msg.track.Title), slog.Int("queue_len_before", m.queue.Len()))
 		m.queue.Add(msg.track)
 		m.logger.Debug("track added to queue", slog.Int("queue_len_after", m.queue.Len()), slog.Int("current_idx", m.queue.CurrentIndex()))
-		return m, m.playTrackCmd(msg.track)
+		return m, tea.Batch(m.playTrackCmd(msg.track), m.saveQueueCmd())
 	case profileSwitchedMsg:
 		m.provider = msg.provider
 		m.cfg.ActiveProfile = msg.profile.ID
@@ -600,6 +690,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "Profile switched"
 		m.healthOK = true
 		m.healthDetails = "OK"
+		// Clear saved queue on profile switch
+		if m.queueStore != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = m.queueStore.Clear(ctx)
+			cancel()
+		}
 		return m, tea.Batch(m.initProviderCmd(), m.watchPlayerCmd(), m.healthCheckCmd())
 	case clearErrorMsg:
 		m.errorMsg = ""
@@ -761,6 +857,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if m.screen == screenPlaylists && len(m.playlists) == 0 {
 					return m, m.loadPlaylistsCmd("")
 				}
+			} else if m.screen == screenLyrics {
+				// Scroll lyrics down
+				if m.lyrics != "" {
+					lines := strings.Split(m.lyrics, "\n")
+					if m.lyricsScrollOffset < len(lines)-20 {
+						m.lyricsScrollOffset++
+					}
+				}
 			} else {
 				// Navigate within list content
 				if m.selection < m.currentListLen()-1 {
@@ -798,6 +902,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selection = 0
 				if m.screen == screenPlaylists && len(m.playlists) == 0 {
 					return m, m.loadPlaylistsCmd("")
+				}
+			} else if m.screen == screenLyrics {
+				// Scroll lyrics up
+				if m.lyricsScrollOffset > 0 {
+					m.lyricsScrollOffset--
 				}
 			} else {
 				// Navigate within list content
@@ -858,7 +967,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				} else {
 					m.logger.Debug("remove failed", slog.Any("err", err))
 				}
-				return m, nil
+				return m, m.saveQueueCmd()
 			}
 		case "d":
 			if m.screen == screenQueue {
@@ -866,7 +975,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					_ = m.queue.Move(m.selection, m.selection+1)
 					m.selection++
 				}
-				return m, nil
+				return m, m.saveQueueCmd()
 			}
 		case "u":
 			if m.screen == screenQueue {
@@ -874,7 +983,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					_ = m.queue.Move(m.selection, m.selection-1)
 					m.selection--
 				}
-				return m, nil
+				return m, m.saveQueueCmd()
 			}
 		case "J":
 			if m.screen == screenQueue {
@@ -882,7 +991,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					_ = m.queue.Move(m.selection, m.selection+1)
 					m.selection++
 				}
-				return m, nil
+				return m, m.saveQueueCmd()
 			}
 		case "K":
 			if m.screen == screenQueue {
@@ -890,18 +999,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					_ = m.queue.Move(m.selection, m.selection-1)
 					m.selection--
 				}
-				return m, nil
+				return m, m.saveQueueCmd()
 			}
 		case "c":
 			if m.screen == screenQueue {
 				m.queue.Clear()
 				m.selection = 0
-				return m, nil
+				return m, m.saveQueueCmd()
 			}
 		case "C":
 			if m.screen == screenQueue {
 				m.queue.Clear()
 				m.selection = 0
+				return m, m.saveQueueCmd()
+			}
+		case "g":
+			// Go to top (lyrics screen)
+			if m.screen == screenLyrics {
+				m.lyricsScrollOffset = 0
+				return m, nil
+			}
+		case "G":
+			// Go to bottom (lyrics screen)
+			if m.screen == screenLyrics && m.lyrics != "" {
+				lines := strings.Split(m.lyrics, "\n")
+				m.lyricsScrollOffset = len(lines) - 20
+				if m.lyricsScrollOffset < 0 {
+					m.lyricsScrollOffset = 0
+				}
 				return m, nil
 			}
 		default:
@@ -1056,7 +1181,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.nowPlaying = msg.track
 			m.paused = false
 			m.status = "Playing " + msg.track.Title
+
+			// Fetch lyrics for new track if provider supports it
+			caps := m.provider.Capabilities()
+			if caps[provider.CapLyrics] && msg.track.ID != m.lyricsTrackID {
+				m.lyrics = ""
+				m.lyricsLoading = true
+				m.lyricsError = nil
+				m.lyricsScrollOffset = 0
+				return m, m.fetchLyricsCmd(msg.track.ID)
+			}
 		}
+	case lyricsMsg:
+		// Only update if this is for the current track
+		if msg.trackID == m.nowPlaying.ID {
+			m.lyricsTrackID = msg.trackID
+			m.lyricsLoading = false
+			if msg.err != nil {
+				m.lyricsError = msg.err
+				m.lyrics = ""
+			} else {
+				m.lyrics = msg.lyrics
+				m.lyricsError = nil
+			}
+		}
+		return m, nil
 	case playerMsg:
 		if msg.TimePos != nil {
 			m.timePos = *msg.TimePos
@@ -1895,20 +2044,56 @@ func (m Model) renderLyrics() string {
 	b.WriteString(m.theme.Title.Render("Lyrics") + "  " + m.theme.Dim.Render(trackInfo) + "\n\n")
 
 	// Lyrics content in a box
-	var lyricsContent string
+	var lyricsContent strings.Builder
 
 	// Check if provider supports lyrics
 	caps := m.provider.Capabilities()
 	if !caps[provider.CapLyrics] {
-		lyricsContent = m.theme.Dim.Render("  Lyrics not supported by this provider")
+		lyricsContent.WriteString(m.theme.Dim.Render("  Lyrics not supported by this provider"))
 	} else if m.nowPlaying.Title == "" {
-		lyricsContent = m.theme.Dim.Render("  No track playing")
+		lyricsContent.WriteString(m.theme.Dim.Render("  No track playing"))
+	} else if m.lyricsLoading {
+		lyricsContent.WriteString(m.theme.Dim.Render("  Loading lyrics..."))
+	} else if m.lyricsError != nil {
+		lyricsContent.WriteString(m.theme.Dim.Render("  No lyrics available for this track"))
+	} else if m.lyrics == "" {
+		lyricsContent.WriteString(m.theme.Dim.Render("  No lyrics available for this track"))
 	} else {
-		// TODO: Fetch and display actual lyrics from provider
-		lyricsContent = m.theme.Dim.Render("  No lyrics available for this track")
+		// Display lyrics with scroll support
+		lines := strings.Split(m.lyrics, "\n")
+		visibleRows := 20
+		start := m.lyricsScrollOffset
+		if start < 0 {
+			start = 0
+		}
+		end := start + visibleRows
+		if end > len(lines) {
+			end = len(lines)
+		}
+
+		// Show scroll position indicator
+		if len(lines) > visibleRows {
+			scrollInfo := fmt.Sprintf("  [%d-%d of %d lines]", start+1, end, len(lines))
+			lyricsContent.WriteString(m.theme.Dim.Render(scrollInfo) + "\n\n")
+		}
+
+		for i := start; i < end; i++ {
+			line := lines[i]
+			// Trim timestamps from LRC format if present (e.g., "[00:12.34]")
+			if len(line) > 0 && line[0] == '[' {
+				if idx := strings.Index(line, "]"); idx > 0 && idx < 12 {
+					line = strings.TrimSpace(line[idx+1:])
+				}
+			}
+			if line == "" {
+				lyricsContent.WriteString("\n")
+			} else {
+				lyricsContent.WriteString("  " + m.theme.Text.Render(line) + "\n")
+			}
+		}
 	}
 
-	b.WriteString(boxStyle.Render(lyricsContent))
+	b.WriteString(boxStyle.Render(lyricsContent.String()))
 	b.WriteString("\n\n")
 
 	// Action hints

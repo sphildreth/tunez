@@ -18,6 +18,7 @@ import (
 	"github.com/tunez/tunez/internal/provider"
 	"github.com/tunez/tunez/internal/providers/filesystem"
 	"github.com/tunez/tunez/internal/providers/melodee"
+	"github.com/tunez/tunez/internal/queue"
 	"github.com/tunez/tunez/internal/ui"
 )
 
@@ -115,9 +116,20 @@ Examples:
 	}
 	defer ctrl.Stop()
 
+	// Initialize queue persistence store if enabled
+	var queueStore *queue.PersistenceStore
+	if cfg.Queue.Persist {
+		queueStore, err = queue.NewPersistenceStore("")
+		if err != nil {
+			logger.Warn("queue persistence unavailable", slog.Any("err", err))
+		} else {
+			defer queueStore.Close()
+		}
+	}
+
 	// NO_COLOR env var support per accessibility spec
 	noColor := os.Getenv("NO_COLOR") != "" || cfg.UI.NoEmoji
-	theme := ui.Rainbow(noColor)
+	theme := ui.GetTheme(cfg.UI.Theme, noColor)
 
 	// Build startup options from CLI flags
 	startupOpts := app.StartupOptions{
@@ -129,7 +141,7 @@ Examples:
 
 	model := app.New(cfg, prov, func(p config.Profile) (provider.Provider, error) {
 		return buildProvider(p)
-	}, ctrl, profile.Settings, theme, startupOpts, logger)
+	}, ctrl, profile.Settings, theme, startupOpts, queueStore, logger)
 	if _, err := tea.NewProgram(model, tea.WithAltScreen()).Run(); err != nil {
 		logger.Error("run tui", slog.Any("err", err))
 		log.Fatalf("tui: %v", err)
@@ -150,7 +162,7 @@ func buildProvider(p config.Profile) (provider.Provider, error) {
 func runDoctor(cfg *config.Config, logger *slog.Logger) {
 	fmt.Println("Tunez doctor")
 	fmt.Println("Config file: OK")
-	
+
 	// Check mpv
 	mpvPath, err := exec.LookPath(cfg.Player.MPVPath)
 	if err != nil {
@@ -158,7 +170,7 @@ func runDoctor(cfg *config.Config, logger *slog.Logger) {
 	} else {
 		fmt.Printf("mpv: OK (%s)\n", mpvPath)
 	}
-	
+
 	// Check ffprobe
 	ffprobePath, err := exec.LookPath("ffprobe")
 	if err != nil {
@@ -166,7 +178,7 @@ func runDoctor(cfg *config.Config, logger *slog.Logger) {
 	} else {
 		fmt.Printf("ffprobe: OK (%s)\n", ffprobePath)
 	}
-	
+
 	// Check profile
 	profile, ok := cfg.ProfileByID(cfg.ActiveProfile)
 	if !ok {
@@ -174,7 +186,7 @@ func runDoctor(cfg *config.Config, logger *slog.Logger) {
 		return
 	}
 	fmt.Printf("Active profile: %s (%s provider)\n", profile.Name, profile.Provider)
-	
+
 	// Check provider can be built (but don't initialize/scan)
 	_, err = buildProvider(profile)
 	if err != nil {
@@ -182,7 +194,7 @@ func runDoctor(cfg *config.Config, logger *slog.Logger) {
 		return
 	}
 	fmt.Println("Provider: OK")
-	
+
 	logger.Info("doctor complete")
 }
 
@@ -192,15 +204,15 @@ func runScan(cfg *config.Config, logger *slog.Logger) {
 		fmt.Printf("Profile '%s' not found\n", cfg.ActiveProfile)
 		return
 	}
-	
+
 	prov, err := buildProvider(profile)
 	if err != nil {
 		fmt.Printf("Provider error: %v\n", err)
 		return
 	}
-	
+
 	fmt.Printf("Scanning library for profile '%s' (%s)...\n", profile.Name, profile.Provider)
-	
+
 	// Force scan by setting scan_on_init in settings with progress callback
 	var settings any = profile.Settings
 	if settings == nil {
@@ -219,24 +231,24 @@ func runScan(cfg *config.Config, logger *slog.Logger) {
 		}
 		settings = m
 	}
-	
+
 	ctx := context.Background() // No timeout for scan
 	start := time.Now()
 	if err := prov.Initialize(ctx, settings); err != nil {
 		fmt.Printf("\nScan error: %v\n", err)
 		return
 	}
-	
+
 	// Clear progress line and show completion
 	fmt.Printf("\r\033[K")
-	
+
 	// Get counts
 	healthy, details := prov.Health(ctx)
 	if !healthy {
 		fmt.Printf("Health check failed: %s\n", details)
 		return
 	}
-	
+
 	fmt.Printf("Scan complete in %s\n", time.Since(start).Round(time.Millisecond))
 	fmt.Printf("  %s\n", details)
 	logger.Info("scan complete", slog.Duration("duration", time.Since(start)))

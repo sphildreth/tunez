@@ -48,8 +48,8 @@ func (p *testProvider) Search(ctx context.Context, q string, req provider.ListRe
 		return provider.SearchResults{}, nil
 	}
 	return provider.SearchResults{
-		Tracks: provider.Page[provider.Track]{Items: p.tracks},
-		Albums: provider.Page[provider.Album]{Items: p.albums},
+		Tracks:  provider.Page[provider.Track]{Items: p.tracks},
+		Albums:  provider.Page[provider.Album]{Items: p.albums},
 		Artists: provider.Page[provider.Artist]{Items: p.artists},
 	}, nil
 }
@@ -57,13 +57,14 @@ func (p *testProvider) Search(ctx context.Context, q string, req provider.ListRe
 // createTestModel creates a Model suitable for teatest
 func createTestModel(t *testing.T) Model {
 	t.Helper()
-	
+
 	cfg := &config.Config{
 		UI: config.UIConfig{Theme: "rainbow"},
 		Player: config.PlayerConfig{
 			SeekSmall:  5,
 			VolumeStep: 5,
 		},
+		Queue: config.QueueConfig{Persist: false},
 		Keybindings: config.KeybindConfig{
 			PlayPause:    "space",
 			NextTrack:    "n",
@@ -85,7 +86,7 @@ func createTestModel(t *testing.T) Model {
 
 	m := New(cfg, prov, func(p config.Profile) (provider.Provider, error) {
 		return prov, nil
-	}, pl, nil, theme, StartupOptions{}, nil)
+	}, pl, nil, theme, StartupOptions{}, nil, nil)
 
 	return m
 }
@@ -102,10 +103,10 @@ func initializeModel(m Model, prov *testProvider) Model {
 // TestScreensGolden tests each screen renders correctly using golden files
 func TestScreensGolden(t *testing.T) {
 	prov := newTestProvider()
-	
+
 	tests := []struct {
-		name   string
-		setup  func(m Model) Model
+		name  string
+		setup func(m Model) Model
 	}{
 		{
 			name: "now_playing_empty",
@@ -193,10 +194,10 @@ func TestScreensGolden(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			m := createTestModel(t)
 			m = tt.setup(m)
-			
+
 			// Render the view
 			output := m.View()
-			
+
 			// Compare against golden file
 			teatest.RequireEqualOutput(t, []byte(output))
 		})
@@ -242,7 +243,7 @@ func TestViewOutput(t *testing.T) {
 	m := createTestModel(t)
 	prov := newTestProvider()
 	m = initializeModel(m, prov)
-	
+
 	screens := []struct {
 		name     string
 		screen   screen
@@ -279,7 +280,7 @@ func TestViewOutput(t *testing.T) {
 		t.Run(sc.name, func(t *testing.T) {
 			m.screen = sc.screen
 			output := m.View()
-			
+
 			for _, expected := range sc.contains {
 				if !bytes.Contains([]byte(output), []byte(expected)) {
 					t.Errorf("screen %s: expected to contain %q\nGot:\n%s", sc.name, expected, output)

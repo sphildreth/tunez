@@ -68,6 +68,7 @@ func TestNavigation(t *testing.T) {
 			SeekSmall:  5,
 			VolumeStep: 5,
 		},
+		Queue: config.QueueConfig{Persist: false},
 	}
 	prov := &mockProvider{
 		artists: []provider.Artist{{ID: "1", Name: "Artist 1"}},
@@ -80,7 +81,7 @@ func TestNavigation(t *testing.T) {
 
 	m := New(cfg, prov, func(p config.Profile) (provider.Provider, error) {
 		return prov, nil
-	}, pl, nil, theme, StartupOptions{}, nil)
+	}, pl, nil, theme, StartupOptions{}, nil, nil)
 
 	// 1. Initial State
 	if m.screen != screenLoading {
@@ -162,6 +163,7 @@ func TestNextPrevDoesNotAddToQueue(t *testing.T) {
 			SeekSmall:  5,
 			VolumeStep: 5,
 		},
+		Queue: config.QueueConfig{Persist: false},
 		Keybindings: config.KeybindConfig{
 			NextTrack: "n",
 			PrevTrack: "N",
@@ -182,7 +184,7 @@ func TestNextPrevDoesNotAddToQueue(t *testing.T) {
 
 	m := New(cfg, prov, func(p config.Profile) (provider.Provider, error) {
 		return prov, nil
-	}, pl, nil, theme, StartupOptions{}, nil)
+	}, pl, nil, theme, StartupOptions{}, nil, nil)
 
 	// Initialize model
 	m, _ = updateModel(m, initMsg{err: nil})

@@ -15,12 +15,35 @@ import (
 
 // Config holds Tunez runtime configuration loaded from TOML.
 type Config struct {
-	ConfigVersion int           `toml:"config_version"`
-	ActiveProfile string        `toml:"active_profile"`
-	UI            UIConfig      `toml:"ui"`
-	Player        PlayerConfig  `toml:"player"`
-	Keybindings   KeybindConfig `toml:"keybindings"`
-	Profiles      []Profile     `toml:"profiles"`
+	ConfigVersion int              `toml:"config_version"`
+	ActiveProfile string           `toml:"active_profile"`
+	UI            UIConfig         `toml:"ui"`
+	Player        PlayerConfig     `toml:"player"`
+	Queue         QueueConfig      `toml:"queue"`
+	Artwork       ArtworkConfig    `toml:"artwork"`
+	Keybindings   KeybindConfig    `toml:"keybindings"`
+	Profiles      []Profile        `toml:"profiles"`
+	Scrobblers    []ScrobblerEntry `toml:"scrobblers"`
+}
+
+// QueueConfig holds queue persistence settings.
+type QueueConfig struct {
+	Persist bool `toml:"persist"`
+}
+
+// ArtworkConfig holds artwork display settings.
+type ArtworkConfig struct {
+	Enabled   bool `toml:"enabled"`
+	Width     int  `toml:"width"`
+	CacheDays int  `toml:"cache_days"`
+}
+
+// ScrobblerEntry defines a scrobbler configuration.
+type ScrobblerEntry struct {
+	ID       string         `toml:"id"`
+	Type     string         `toml:"type"` // "lastfm", "melodee"
+	Enabled  bool           `toml:"enabled"`
+	Settings map[string]any `toml:"settings"`
 }
 
 type UIConfig struct {
@@ -189,6 +212,19 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Keybindings.Quit == "" {
 		cfg.Keybindings.Quit = "ctrl+c"
+	}
+	// Queue defaults - persist enabled by default
+	if !cfg.Queue.Persist {
+		// Default to true unless explicitly set to false in config
+		// Note: TOML will parse missing as false, so we treat missing as "use default"
+		cfg.Queue.Persist = true
+	}
+	// Artwork defaults
+	if cfg.Artwork.Width == 0 {
+		cfg.Artwork.Width = 20
+	}
+	if cfg.Artwork.CacheDays == 0 {
+		cfg.Artwork.CacheDays = 30
 	}
 }
 
