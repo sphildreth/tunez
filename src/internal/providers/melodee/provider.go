@@ -138,6 +138,25 @@ func (p *Provider) authHeader(req *http.Request) {
 	}
 }
 
+func (p *Provider) doRequest(req *http.Request) (*http.Response, error) {
+	p.authHeader(req)
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+		// Re-authenticate
+		if err := p.authenticate(req.Context()); err != nil {
+			return nil, err // Return auth error
+		}
+		// Retry once
+		p.authHeader(req)
+		return p.client.Do(req)
+	}
+	return resp, nil
+}
+
 func (p *Provider) ListArtists(ctx context.Context, req provider.ListReq) (provider.Page[provider.Artist], error) {
 	page, err := getPaged[provider.Artist](ctx, p, "/api/v1/artists", req)
 	if err != nil {
@@ -194,8 +213,7 @@ func (p *Provider) Search(ctx context.Context, q string, req provider.ListReq) (
 	qp.Set("pageSize", strconv.Itoa(pageSize))
 	u.RawQuery = qp.Encode()
 	httpReq, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	p.authHeader(httpReq)
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.doRequest(httpReq)
 	if err != nil {
 		return provider.SearchResults{}, mapHTTPError(err)
 	}
@@ -271,8 +289,7 @@ func getPaged[T any](ctx context.Context, p *Provider, path string, req provider
 	q.Set("pageSize", strconv.Itoa(pageSize))
 	u.RawQuery = q.Encode()
 	httpReq, _ := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	p.authHeader(httpReq)
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.doRequest(httpReq)
 	if err != nil {
 		return provider.Page[T]{}, mapHTTPError(err)
 	}
@@ -304,8 +321,7 @@ func getOne[T any](ctx context.Context, p *Provider, path string) (T, error) {
 	var zero T
 	u := p.cfg.BaseURL + path
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	p.authHeader(req)
-	resp, err := p.client.Do(req)
+	resp, err := p.doRequest(req)
 	if err != nil {
 		return zero, mapHTTPError(err)
 	}

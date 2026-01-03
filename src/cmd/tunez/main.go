@@ -54,13 +54,7 @@ func main() {
 		logger.Error("provider init", slog.Any("err", err))
 		log.Fatalf("init provider: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := prov.Initialize(ctx, profile.Settings); err != nil {
-		logger.Error("provider init", slog.Any("err", err))
-		log.Fatalf("init provider: %v", err)
-	}
-
+	
 	ctrl := player.New(player.Options{
 		MPVPath: cfg.Player.MPVPath,
 		Logger:  logger,
@@ -69,7 +63,7 @@ func main() {
 		logger.Error("start player", slog.Any("err", err))
 		log.Fatalf("start player: %v", err)
 	}
-	model := app.New(cfg, prov, ctrl)
+	model := app.New(cfg, prov, ctrl, profile.Settings)
 	if _, err := tea.NewProgram(model, tea.WithAltScreen()).Run(); err != nil {
 		logger.Error("run tui", slog.Any("err", err))
 		log.Fatalf("tui: %v", err)

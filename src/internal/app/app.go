@@ -32,38 +32,58 @@ type Model struct {
 	queue    *queue.Queue
 	theme    ui.Theme
 
-	screen     screen
-	status     string
-	err        error
-	artists    []provider.Artist
-	tracks     []provider.Track
-	searchQ    string
-	searchRes  []provider.Track
-	selection  int
-	width      int
-	height     int
-	showHelp   bool
-	nowPlaying provider.Track
-	paused     bool
-	timePos    float64
-	duration   float64
-	volume     float64
+	screen          screen
+	status          string
+	err             error
+	artists         []provider.Artist
+	albums          []provider.Album
+	tracks          []provider.Track
+	searchQ         string
+	searchRes       []provider.Track
+	selection       int
+	width           int
+	height          int
+	showHelp        bool
+	nowPlaying      provider.Track
+	paused          bool
+	timePos         float64
+	duration        float64
+	volume          float64
+	profileSettings any
 }
 
-func New(cfg *config.Config, prov provider.Provider, player *player.Controller) Model {
+func New(cfg *config.Config, prov provider.Provider, player *player.Controller, settings any) Model {
 	return Model{
-		cfg:      cfg,
-		provider: prov,
-		player:   player,
-		queue:    queue.New(),
-		theme:    ui.Rainbow(cfg.UI.NoEmoji),
-		screen:   screenLoading,
-		status:   "Loading…",
+		cfg:             cfg,
+		provider:        prov,
+		player:          player,
+		queue:           queue.New(),
+		theme:           ui.Rainbow(cfg.UI.NoEmoji),
+		screen:          screenLoading,
+		status:          "Loading…",
+		profileSettings: settings,
 	}
 }
 
+type initMsg struct {
+	err error
+}
+
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(m.loadArtistsCmd(), m.watchPlayerCmd())
+	return tea.Batch(m.initProviderCmd(), m.watchPlayerCmd())
+}
+
+func (m Model) initProviderCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := m.provider.Initialize(ctx, m.profileSettings); err != nil {
+			return initMsg{err: err}
+		}
+		// Load initial data
+		page, err := m.provider.ListArtists(ctx, provider.ListReq{PageSize: m.cfg.UI.PageSize})
+		return artistsMsg{page: page, err: err}
+	}
 }
 
 func (m Model) loadArtistsCmd() tea.Cmd {
@@ -72,6 +92,15 @@ func (m Model) loadArtistsCmd() tea.Cmd {
 		defer cancel()
 		page, err := m.provider.ListArtists(ctx, provider.ListReq{PageSize: m.cfg.UI.PageSize})
 		return artistsMsg{page: page, err: err}
+	}
+}
+
+func (m Model) loadAlbumsCmd(artistID string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		page, err := m.provider.ListAlbums(ctx, artistID, provider.ListReq{PageSize: m.cfg.UI.PageSize})
+		return albumsMsg{page: page, err: err}
 	}
 }
 
@@ -108,6 +137,11 @@ type artistsMsg struct {
 	err  error
 }
 
+type albumsMsg struct {
+	page provider.Page[provider.Album]
+	err  error
+}
+
 type tracksMsg struct {
 	page provider.Page[provider.Track]
 	err  error
@@ -127,6 +161,13 @@ type playTrackMsg struct {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case initMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			m.status = "Init failed: " + msg.err.Error()
+		} else {
+			m.status = "Ready"
+		}
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c":
@@ -154,6 +195,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selection--
 			}
 			return m, nil
+		case "h", "left", "backspace":
+			if m.screen == screenLibrary {
+				if len(m.tracks) > 0 {
+					m.tracks = nil
+					m.selection = 0
+					m.status = "Albums"
+					return m, nil
+				}
+				if len(m.albums) > 0 {
+					m.albums = nil
+					m.selection = 0
+					m.status = "Artists"
+					return m, nil
+				}
+			}
+			// Seeking for other screens
+			_ = m.player.Seek(float64(-m.cfg.Player.SeekSmall))
+		case "l", "right":
+			if m.screen == screenLibrary {
+				return m.handleEnter()
+			}
+			_ = m.player.Seek(float64(m.cfg.Player.SeekSmall))
 		case "/":
 			m.screen = screenSearch
 			m.searchQ = ""
@@ -175,10 +238,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if t, err := m.queue.Prev(); err == nil {
 				return m, m.playTrackCmd(t)
 			}
-		case "h":
-			_ = m.player.Seek(float64(-m.cfg.Player.SeekSmall))
-		case "l":
-			_ = m.player.Seek(float64(m.cfg.Player.SeekSmall))
+
 		case "-":
 			m.volume -= float64(m.cfg.Player.VolumeStep)
 			return m, func() tea.Msg {
@@ -205,6 +265,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.artists = msg.page.Items
 			m.status = "Artists loaded"
 			m.screen = screenLibrary
+		}
+	case albumsMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			m.status = msg.err.Error()
+		} else {
+			m.albums = msg.page.Items
+			m.tracks = nil
+			m.selection = 0
+			m.status = "Albums loaded"
 		}
 	case tracksMsg:
 		if msg.err != nil {
@@ -257,7 +327,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) handleEnter() (tea.Model, tea.Cmd) {
+func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	switch m.screen {
 	case screenLibrary:
 		if len(m.tracks) > 0 {
@@ -265,10 +335,15 @@ func (m *Model) handleEnter() (tea.Model, tea.Cmd) {
 			track := m.tracks[idx]
 			return m, m.playTrackCmd(track)
 		}
+		if len(m.albums) > 0 {
+			idx := clamp(m.selection, 0, len(m.albums)-1)
+			album := m.albums[idx]
+			return m, m.loadTracksCmd(album.ID)
+		}
 		if len(m.artists) > 0 {
 			idx := clamp(m.selection, 0, len(m.artists)-1)
 			artist := m.artists[idx]
-			return m, m.loadTracksCmd(artist.ID)
+			return m, m.loadAlbumsCmd(artist.ID)
 		}
 	case screenSearch:
 		if len(m.searchRes) > 0 {
@@ -324,16 +399,8 @@ func (m Model) View() string {
 
 func (m Model) renderLibrary() string {
 	var b strings.Builder
-	b.WriteString(m.theme.Title.Render("Artists\n"))
-	for i, a := range m.artists {
-		prefix := "  "
-		if i == m.selection {
-			prefix = "⏵ "
-		}
-		b.WriteString(prefix + m.theme.Text.Render(a.Name) + "\n")
-	}
 	if len(m.tracks) > 0 {
-		b.WriteString(m.theme.Title.Render("\nTracks\n"))
+		b.WriteString(m.theme.Title.Render("Tracks\n"))
 		for i, t := range m.tracks {
 			prefix := "  "
 			if i == m.selection {
@@ -342,6 +409,27 @@ func (m Model) renderLibrary() string {
 			line := fmt.Sprintf("%s%s — %s", prefix, t.ArtistName, t.Title)
 			b.WriteString(m.theme.Text.Render(line) + "\n")
 		}
+		return b.String()
+	}
+	if len(m.albums) > 0 {
+		b.WriteString(m.theme.Title.Render("Albums\n"))
+		for i, a := range m.albums {
+			prefix := "  "
+			if i == m.selection {
+				prefix = "⏵ "
+			}
+			line := fmt.Sprintf("%s%s (%d)", prefix, a.Title, a.Year)
+			b.WriteString(m.theme.Text.Render(line) + "\n")
+		}
+		return b.String()
+	}
+	b.WriteString(m.theme.Title.Render("Artists\n"))
+	for i, a := range m.artists {
+		prefix := "  "
+		if i == m.selection {
+			prefix = "⏵ "
+		}
+		b.WriteString(prefix + m.theme.Text.Render(a.Name) + "\n")
 	}
 	return b.String()
 }
@@ -431,6 +519,9 @@ func (m Model) currentListLen() int {
 	case screenLibrary:
 		if len(m.tracks) > 0 {
 			return len(m.tracks)
+		}
+		if len(m.albums) > 0 {
+			return len(m.albums)
 		}
 		return len(m.artists)
 	case screenSearch:

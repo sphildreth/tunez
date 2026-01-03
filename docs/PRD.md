@@ -8,7 +8,7 @@
 
 Use these checkboxes to track implementation status.
 
-- [ ] **Phase 1 (MVP)**: Core TUI (Library/Search/Queue/Now Playing/Help), mpv playback via IPC, Filesystem + Melodee providers (browse/search/play), colorful default rainbow-like theme.
+- [x] **Phase 1 (MVP)**: Core TUI (Library/Search/Queue/Now Playing/Help), mpv playback via IPC, Filesystem + Melodee providers (browse/search/play), colorful default rainbow-like theme.
 - [ ] **Phase 2 (v1)**: Offline cache/download (provider-gated), lyrics + artwork, scrobbling, queue persistence required, additional themes (monochrome, green terminal, etc.).
 - [ ] **Phase 3 (v2)**: Command palette and other advanced UX (e.g., lyrics follow-along), deeper diagnostics/debug overlays.
 
