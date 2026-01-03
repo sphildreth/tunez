@@ -35,3 +35,4 @@ src/filesystem.sqlite
 # Build output
 bin/
 *.sqlite
+src/tunez

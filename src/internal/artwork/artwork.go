@@ -39,10 +39,11 @@ var (
 type Cache struct {
 	baseDir   string
 	cacheDays int
+	maxSize   int64
 }
 
 // NewCache creates a new artwork cache.
-func NewCache(baseDir string, cacheDays int) (*Cache, error) {
+func NewCache(baseDir string, cacheDays int, maxSizeMB int) (*Cache, error) {
 	if baseDir == "" {
 		var err error
 		baseDir, err = defaultCacheDir()
@@ -53,16 +54,25 @@ func NewCache(baseDir string, cacheDays int) (*Cache, error) {
 	if cacheDays <= 0 {
 		cacheDays = 30
 	}
+	if maxSizeMB <= 0 {
+		maxSizeMB = 500 // Default 500MB
+	}
 
 	// Ensure cache directory exists
 	if err := os.MkdirAll(baseDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create cache dir: %w", err)
 	}
 
-	return &Cache{
+	c := &Cache{
 		baseDir:   baseDir,
 		cacheDays: cacheDays,
-	}, nil
+		maxSize:   int64(maxSizeMB) * 1024 * 1024,
+	}
+
+	// Prune on startup to enforce limits
+	go c.Prune()
+
+	return c, nil
 }
 
 func defaultCacheDir() (string, error) {
@@ -126,7 +136,86 @@ func (c *Cache) Get(ref string, width int) (string, bool) {
 func (c *Cache) Set(ref string, width int, ansi string) error {
 	key := cacheKey(ref, width)
 	path := filepath.Join(c.baseDir, key+".ansi")
-	return os.WriteFile(path, []byte(ansi), 0o644)
+	if err := os.WriteFile(path, []byte(ansi), 0o644); err != nil {
+		return err
+	}
+	// Check size occasionally or just fire forget prune
+	go c.Prune()
+	return nil
+}
+
+// Prune removes old files if cache exceeds max size.
+func (c *Cache) Prune() {
+	size, err := c.Size()
+	if err != nil || size <= c.maxSize {
+		return
+	}
+
+	entries, err := os.ReadDir(c.baseDir)
+	if err != nil {
+		return
+	}
+
+	type fileInfo struct {
+		path  string
+		mtime time.Time
+		size  int64
+	}
+	var files []fileInfo
+
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".ansi") {
+			continue
+		}
+		info, err := e.Info()
+		if err == nil {
+			files = append(files, fileInfo{
+				path:  filepath.Join(c.baseDir, e.Name()),
+				mtime: info.ModTime(),
+				size:  info.Size(),
+			})
+		}
+	}
+
+	// Sort by oldest modified
+	// We want to delete oldest files until we are under limit
+	// Bubble sort or slice sort? Slice sort is fine.
+	// We'll just define the sort logic here manually or use sort.Slice if imported (it's not).
+	// Let's implement a simple selection to find oldest or just use loop if we don't care about perfect ordering.
+	// Actually we should sort.
+	// Since 'sort' package is not imported, let's just delete files older than split cacheDays/2 if desperate?
+	// No, let's do it properly. I'll stick to a simple strategy: delete files > cacheDays first (already done by Get).
+	// If still over size, delete oldest.
+	// Since I can't import 'sort' without adding it to imports (which complicates replace tool),
+	// I'll just iterate and find oldest one by one until size is OK? slightly inefficient but fine for background.
+	// actually I can assume 'time' is imported.
+
+	// For simplicity without adding imports: just delete ANY file until size is OK?
+	// No, that's bad.
+	// I will check if 'sort' is imported. It is NOT.
+	// I will add 'sort' to imports in a separate chunk.
+
+	// Wait, I can try to find the oldest in O(N) and delete it, repeat.
+	// If 1000 files, O(N*K) where K is number of files to delete.
+
+	// Implementation:
+	for size > c.maxSize && len(files) > 0 {
+		oldestIdx := 0
+		for i := 1; i < len(files); i++ {
+			if files[i].mtime.Before(files[oldestIdx].mtime) {
+				oldestIdx = i
+			}
+		}
+
+		target := files[oldestIdx]
+		if err := os.Remove(target.path); err == nil {
+			size -= target.size
+		}
+
+		// Remove from slice
+		files[oldestIdx] = files[len(files)-1]
+		files = files[:len(files)-1]
+	}
 }
 
 // Clear removes all cached artwork.
@@ -324,7 +413,7 @@ func DefaultArtwork(width, height int) string {
 
 	// Check cache
 	defaultArtworkCacheOnce.Do(func() {
-		cache, _ := lru.New[string, string](64)
+		cache, _ := lru.New[string, string](128)
 		defaultArtworkCache = cache
 	})
 	defaultArtworkCacheMu.Lock()

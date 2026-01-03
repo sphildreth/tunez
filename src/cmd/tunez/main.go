@@ -172,7 +172,7 @@ Examples:
 	// Initialize artwork cache if enabled
 	var artCache *artwork.Cache
 	if cfg.Artwork.Enabled {
-		artCache, err = artwork.NewCache("", cfg.Artwork.CacheDays)
+		artCache, err = artwork.NewCache("", cfg.Artwork.CacheDays, 0)
 		if err != nil {
 			logger.Warn("artwork cache unavailable", slog.Any("err", err))
 		}
@@ -521,22 +521,22 @@ func runScan(cfg *config.Config, logger *slog.Logger) {
 	fmt.Printf("Scanning library for profile '%s' (%s)...\n", profile.Name, profile.Provider)
 
 	// Force scan by setting scan_on_init in settings with progress callback
-	var settings any = profile.Settings
-	if settings == nil {
-		settings = map[string]any{}
-	}
-	if m, ok := settings.(map[string]any); ok {
-		m["scan_on_init"] = true
-		// Add progress callback for CLI feedback
-		m["scan_progress"] = func(count int, path string) {
-			// Truncate path for display
-			displayPath := path
-			if len(displayPath) > 60 {
-				displayPath = "..." + displayPath[len(displayPath)-57:]
-			}
-			fmt.Printf("\r\033[K  Scanned %d tracks: %s", count, displayPath)
+	settings := make(map[string]any)
+	if profile.Settings != nil {
+		for k, v := range profile.Settings {
+			settings[k] = v
 		}
-		settings = m
+	}
+
+	settings["scan_on_init"] = true
+	// Add progress callback for CLI feedback
+	settings["scan_progress"] = func(count int, path string) {
+		// Truncate path for display
+		displayPath := path
+		if len(displayPath) > 60 {
+			displayPath = "..." + displayPath[len(displayPath)-57:]
+		}
+		fmt.Printf("\r\033[K  Scanned %d tracks: %s", count, displayPath)
 	}
 
 	ctx := context.Background() // No timeout for scan

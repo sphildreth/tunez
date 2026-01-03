@@ -216,20 +216,15 @@ func extractYear(meta tag.Metadata) int {
 				return year
 			}
 		}
-		// Also check DATE for Vorbis comments
-		if v, ok := raw["DATE"]; ok {
-			if year := parseYearValue(v); year > 0 {
-				return year
-			}
-		}
+		// Priority 4: YEAR (standard tag)
 		if v, ok := raw["YEAR"]; ok {
 			if year := parseYearValue(v); year > 0 {
 				return year
 			}
 		}
 	}
-	// Fallback: standard Year() method
-	return meta.Year()
+	// No fallback - return 0 if none of the specified tags are found
+	return 0
 }
 
 // parseYearValue extracts a 4-digit year from various tag value formats
@@ -348,6 +343,15 @@ func (p *Provider) scan(ctx context.Context) error {
 	go func() {
 		defer close(doneChan)
 
+		// Cache known IDs to avoid redundant DB executions
+		knownArtists := make(map[string]bool)
+		knownAlbums := make(map[string]bool)
+
+		// Set PRAGMAs before starting transaction
+		if _, err := p.db.ExecContext(ctx, "PRAGMA synchronous=OFF"); err != nil {
+			slog.Warn("Failed to set synchronous=OFF", "err", err)
+		}
+
 		tx, err := p.db.BeginTx(ctx, nil)
 		if err != nil {
 			errChan <- err
@@ -381,12 +385,20 @@ func (p *Provider) scan(ctx context.Context) error {
 			albumID := hash(artistID, strings.ToLower(ti.AlbumTitle))
 			trackID := hash(ti.Path)
 
-			if _, err := insertArtist.ExecContext(ctx, artistID, ti.ArtistName, strings.ToLower(ti.ArtistName)); err != nil {
-				continue
+			if !knownArtists[artistID] {
+				if _, err := insertArtist.ExecContext(ctx, artistID, ti.ArtistName, strings.ToLower(ti.ArtistName)); err != nil {
+					continue
+				}
+				knownArtists[artistID] = true
 			}
-			if _, err := insertAlbum.ExecContext(ctx, albumID, artistID, ti.AlbumTitle, 0, ""); err != nil {
-				continue
+
+			if !knownAlbums[albumID] {
+				if _, err := insertAlbum.ExecContext(ctx, albumID, artistID, ti.AlbumTitle, ti.Year, ""); err != nil {
+					continue
+				}
+				knownAlbums[albumID] = true
 			}
+
 			if _, err := insertTrack.ExecContext(ctx, trackID, albumID, artistID, ti.TrackTitle, ti.AlbumTitle, ti.ArtistName, ti.Year, ti.TrackNo, ti.DiscNo, ti.DurationMs, ti.Path, ti.Size, ti.Mtime, ti.Codec, ti.BitrateKbps); err != nil {
 				continue
 			}
@@ -403,6 +415,7 @@ func (p *Provider) scan(ctx context.Context) error {
 					errChan <- err
 					return
 				}
+
 				insertArtist, _ = tx.PrepareContext(ctx, `INSERT OR IGNORE INTO artists(id,name,sort_name) VALUES(?,?,?)`)
 				insertAlbum, _ = tx.PrepareContext(ctx, `INSERT OR IGNORE INTO albums(id,artist_id,title,year,artwork_path) VALUES(?,?,?,?,?)`)
 				insertTrack, _ = tx.PrepareContext(ctx, `INSERT OR REPLACE INTO tracks(id,album_id,artist_id,title,album_title,artist_name,year,track_number,disc_number,duration_ms,file_path,file_size,file_mtime,codec,bitrate) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
@@ -450,6 +463,12 @@ func (p *Provider) scan(ctx context.Context) error {
 	if err := <-errChan; err != nil {
 		return err
 	}
+
+	// Optimize DB after scan
+	if _, err := p.db.Exec("PRAGMA optimize"); err != nil {
+		slog.Warn("Failed to run PRAGMA optimize", "err", err)
+	}
+
 	return nil
 }
 

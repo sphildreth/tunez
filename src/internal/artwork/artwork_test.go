@@ -13,7 +13,7 @@ import (
 
 func TestCacheGetSet(t *testing.T) {
 	dir := t.TempDir()
-	cache, err := NewCache(dir, 30)
+	cache, err := NewCache(dir, 30, 0)
 	if err != nil {
 		t.Fatalf("NewCache: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestCacheGetSet(t *testing.T) {
 
 func TestCacheClear(t *testing.T) {
 	dir := t.TempDir()
-	cache, err := NewCache(dir, 30)
+	cache, err := NewCache(dir, 30, 0)
 	if err != nil {
 		t.Fatalf("NewCache: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestCacheClear(t *testing.T) {
 
 func TestCacheSize(t *testing.T) {
 	dir := t.TempDir()
-	cache, err := NewCache(dir, 30)
+	cache, err := NewCache(dir, 30, 0)
 	if err != nil {
 		t.Fatalf("NewCache: %v", err)
 	}
