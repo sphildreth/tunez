@@ -89,6 +89,7 @@ type Track struct {
 	ArtistName  string
 	AlbumID     string
 	AlbumTitle  string
+	Year        int
 	DurationMs  int
 	TrackNo     int
 	DiscNo      int

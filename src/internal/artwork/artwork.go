@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -14,7 +15,16 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
+)
+
+//go:embed default_artwork.png
+var defaultArtworkPNG []byte
+
+var (
+	defaultArtworkCache   = make(map[string]string)
+	defaultArtworkCacheMu sync.RWMutex
 )
 
 var (
@@ -154,13 +164,14 @@ func (c *Cache) Size() (int64, error) {
 	return total, nil
 }
 
-// ConvertToANSI converts image data to ANSI art.
+// ConvertToANSI converts image data to ANSI art using half-block characters
+// for double vertical resolution and true color for best quality.
 func ConvertToANSI(ctx context.Context, data []byte, width, height int) (string, error) {
 	if width <= 0 {
-		width = 20
+		width = 40
 	}
 	if height <= 0 {
-		height = 10
+		height = 20
 	}
 
 	// Decode image
@@ -178,44 +189,70 @@ func ConvertToANSI(ctx context.Context, data []byte, width, height int) (string,
 		return "", ErrInvalid
 	}
 
-	// Calculate aspect ratio correction (terminal chars are ~2x tall as wide)
+	// Calculate dimensions preserving aspect ratio
+	// Each character cell displays 2 vertical pixels using half-blocks
 	aspectRatio := float64(imgWidth) / float64(imgHeight)
-	charHeight := int(float64(width) / aspectRatio / 2)
-	if charHeight > height {
-		charHeight = height
-		width = int(float64(charHeight) * 2 * aspectRatio)
+	charWidth := width
+	charHeight := int(float64(width) / aspectRatio)
+	
+	// charHeight is in "half rows" (2 pixels per char), so actual terminal rows = charHeight/2
+	terminalRows := (charHeight + 1) / 2
+	if terminalRows > height {
+		terminalRows = height
+		charHeight = terminalRows * 2
+		charWidth = int(float64(charHeight) * aspectRatio)
 	}
 
-	// Sample and convert to ANSI
+	// Use half-block rendering: each character shows top and bottom pixel
+	// ▀ = upper half block (fg = top pixel, bg = bottom pixel)
 	var result strings.Builder
-	for y := 0; y < charHeight; y++ {
-		for x := 0; x < width; x++ {
-			// Sample pixel
-			sampleX := (x * imgWidth) / width
-			sampleY := (y * imgHeight) / charHeight
+	for row := 0; row < terminalRows; row++ {
+		for x := 0; x < charWidth; x++ {
+			// Sample top pixel (row * 2)
+			topY := (row * 2 * imgHeight) / charHeight
+			// Sample bottom pixel (row * 2 + 1)
+			bottomY := ((row*2 + 1) * imgHeight) / charHeight
+			sampleX := (x * imgWidth) / charWidth
+
 			if sampleX >= imgWidth {
 				sampleX = imgWidth - 1
 			}
-			if sampleY >= imgHeight {
-				sampleY = imgHeight - 1
+			if topY >= imgHeight {
+				topY = imgHeight - 1
+			}
+			if bottomY >= imgHeight {
+				bottomY = imgHeight - 1
 			}
 
-			r, g, b, a := img.At(bounds.Min.X+sampleX, bounds.Min.Y+sampleY).RGBA()
-			// Convert from 16-bit to 8-bit
-			r8, g8, b8 := uint8(r>>8), uint8(g>>8), uint8(b>>8)
-			a8 := uint8(a >> 8)
+			// Get top pixel color
+			tr, tg, tb, ta := img.At(bounds.Min.X+sampleX, bounds.Min.Y+topY).RGBA()
+			tr8, tg8, tb8 := uint8(tr>>8), uint8(tg>>8), uint8(tb>>8)
+			ta8 := uint8(ta >> 8)
+
+			// Get bottom pixel color  
+			br, bg, bb, ba := img.At(bounds.Min.X+sampleX, bounds.Min.Y+bottomY).RGBA()
+			br8, bg8, bb8 := uint8(br>>8), uint8(bg>>8), uint8(bb>>8)
+			ba8 := uint8(ba >> 8)
 
 			// Handle transparency
-			if a8 < 128 {
-				result.WriteString(" ")
-				continue
-			}
+			topTransparent := ta8 < 128
+			bottomTransparent := ba8 < 128
 
-			// Use 256-color mode for better compatibility
-			colorCode := rgbTo256(r8, g8, b8)
-			result.WriteString(fmt.Sprintf("\x1b[48;5;%dm \x1b[0m", colorCode))
+			if topTransparent && bottomTransparent {
+				result.WriteString(" ")
+			} else if topTransparent {
+				// Only bottom pixel visible - use lower half block
+				result.WriteString(fmt.Sprintf("\x1b[38;2;%d;%d;%dm▄\x1b[0m", br8, bg8, bb8))
+			} else if bottomTransparent {
+				// Only top pixel visible - use upper half block
+				result.WriteString(fmt.Sprintf("\x1b[38;2;%d;%d;%dm▀\x1b[0m", tr8, tg8, tb8))
+			} else {
+				// Both pixels visible - use upper half block with fg=top, bg=bottom
+				result.WriteString(fmt.Sprintf("\x1b[38;2;%d;%d;%dm\x1b[48;2;%d;%d;%dm▀\x1b[0m", 
+					tr8, tg8, tb8, br8, bg8, bb8))
+			}
 		}
-		if y < charHeight-1 {
+		if row < terminalRows-1 {
 			result.WriteString("\n")
 		}
 	}
@@ -268,4 +305,39 @@ func Placeholder(width, height int) string {
 	}
 	result.WriteString("└" + strings.Repeat("─", width-2) + "┘")
 	return result.String()
+}
+
+// DefaultArtwork returns the default tunez logo as ANSI art.
+// Results are cached in memory by dimensions.
+func DefaultArtwork(width, height int) string {
+	if width <= 0 {
+		width = 20
+	}
+	if height <= 0 {
+		height = 10
+	}
+
+	key := fmt.Sprintf("%d:%d", width, height)
+
+	// Check cache
+	defaultArtworkCacheMu.RLock()
+	if cached, ok := defaultArtworkCache[key]; ok {
+		defaultArtworkCacheMu.RUnlock()
+		return cached
+	}
+	defaultArtworkCacheMu.RUnlock()
+
+	// Convert embedded PNG to ANSI
+	result, err := ConvertToANSI(context.Background(), defaultArtworkPNG, width, height)
+	if err != nil {
+		// Fallback to text placeholder if conversion fails
+		return Placeholder(width, height)
+	}
+
+	// Cache result
+	defaultArtworkCacheMu.Lock()
+	defaultArtworkCache[key] = result
+	defaultArtworkCacheMu.Unlock()
+
+	return result
 }

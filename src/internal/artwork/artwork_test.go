@@ -151,3 +151,22 @@ func TestRgbTo256(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultArtwork(t *testing.T) {
+	// Should return ANSI art from embedded PNG
+	art := DefaultArtwork(20, 10)
+	if art == "" {
+		t.Error("expected non-empty default artwork")
+	}
+
+	// Should contain ANSI escape codes
+	if !strings.Contains(art, "\x1b[") {
+		t.Error("expected ANSI escape codes in default artwork")
+	}
+
+	// Should be cached (call again and verify same result)
+	art2 := DefaultArtwork(20, 10)
+	if art != art2 {
+		t.Error("expected cached result to match")
+	}
+}

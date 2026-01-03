@@ -50,7 +50,8 @@ func (p *Provider) Name() string { return "Filesystem" }
 
 func (p *Provider) Capabilities() provider.Capabilities {
 	return provider.Capabilities{
-		provider.CapLyrics: true,
+		provider.CapLyrics:  true,
+		provider.CapArtwork: true,
 	}
 }
 
@@ -142,7 +143,7 @@ func (p *Provider) ensureSchema(ctx context.Context) error {
 	schema := []string{
 		`CREATE TABLE IF NOT EXISTS artists (id TEXT PRIMARY KEY, name TEXT NOT NULL, sort_name TEXT NOT NULL);`,
 		`CREATE TABLE IF NOT EXISTS albums (id TEXT PRIMARY KEY, artist_id TEXT NOT NULL, title TEXT NOT NULL, year INTEGER, artwork_path TEXT, FOREIGN KEY(artist_id) REFERENCES artists(id));`,
-		`CREATE TABLE IF NOT EXISTS tracks (id TEXT PRIMARY KEY, album_id TEXT NOT NULL, artist_id TEXT NOT NULL, title TEXT NOT NULL, album_title TEXT NOT NULL, artist_name TEXT NOT NULL, track_number INTEGER, disc_number INTEGER, duration_ms INTEGER, file_path TEXT NOT NULL UNIQUE, file_size INTEGER, file_mtime INTEGER, codec TEXT, bitrate INTEGER, FOREIGN KEY(album_id) REFERENCES albums(id), FOREIGN KEY(artist_id) REFERENCES artists(id));`,
+		`CREATE TABLE IF NOT EXISTS tracks (id TEXT PRIMARY KEY, album_id TEXT NOT NULL, artist_id TEXT NOT NULL, title TEXT NOT NULL, album_title TEXT NOT NULL, artist_name TEXT NOT NULL, year INTEGER, track_number INTEGER, disc_number INTEGER, duration_ms INTEGER, file_path TEXT NOT NULL UNIQUE, file_size INTEGER, file_mtime INTEGER, codec TEXT, bitrate INTEGER, FOREIGN KEY(album_id) REFERENCES albums(id), FOREIGN KEY(artist_id) REFERENCES artists(id));`,
 		`CREATE INDEX IF NOT EXISTS idx_tracks_album ON tracks(album_id, disc_number, track_number);`,
 		`CREATE INDEX IF NOT EXISTS idx_albums_artist ON albums(artist_id, year, title);`,
 		`CREATE INDEX IF NOT EXISTS idx_artists_sort ON artists(sort_name);`,
@@ -163,6 +164,78 @@ func hash(parts ...string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// extractYear extracts year from ID3 tags with priority: TORY > TDOR > TDRL > YEAR
+// TORY = Original Release Year (ID3v2.3)
+// TDOR = Original Release Date (ID3v2.4)
+// TDRL = Release Date (ID3v2.4)
+// YEAR = Year from standard tag interface
+func extractYear(meta tag.Metadata) int {
+	raw := meta.Raw()
+	if raw != nil {
+		// Priority 1: TORY (Original Release Year - ID3v2.3)
+		if v, ok := raw["TORY"]; ok {
+			if year := parseYearValue(v); year > 0 {
+				return year
+			}
+		}
+		// Priority 2: TDOR (Original Release Date - ID3v2.4)
+		if v, ok := raw["TDOR"]; ok {
+			if year := parseYearValue(v); year > 0 {
+				return year
+			}
+		}
+		// Priority 3: TDRL (Release Date - ID3v2.4)
+		if v, ok := raw["TDRL"]; ok {
+			if year := parseYearValue(v); year > 0 {
+				return year
+			}
+		}
+		// Also check DATE for Vorbis comments
+		if v, ok := raw["DATE"]; ok {
+			if year := parseYearValue(v); year > 0 {
+				return year
+			}
+		}
+		if v, ok := raw["YEAR"]; ok {
+			if year := parseYearValue(v); year > 0 {
+				return year
+			}
+		}
+	}
+	// Fallback: standard Year() method
+	return meta.Year()
+}
+
+// parseYearValue extracts a 4-digit year from various tag value formats
+func parseYearValue(v any) int {
+	var s string
+	switch val := v.(type) {
+	case string:
+		s = val
+	case int:
+		return val
+	case int64:
+		return int(val)
+	default:
+		s = fmt.Sprintf("%v", val)
+	}
+	// Try to extract 4-digit year from start of string (handles "2024-01-15" format)
+	if len(s) >= 4 {
+		year := 0
+		for i := 0; i < 4 && i < len(s); i++ {
+			c := s[i]
+			if c < '0' || c > '9' {
+				break
+			}
+			year = year*10 + int(c-'0')
+		}
+		if year >= 1900 && year <= 2100 {
+			return year
+		}
+	}
+	return 0
+}
+
 func (p *Provider) scan(ctx context.Context) error {
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -174,7 +247,7 @@ func (p *Provider) scan(ctx context.Context) error {
 	}
 	insertArtist, _ := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO artists(id,name,sort_name) VALUES(?,?,?)`)
 	insertAlbum, _ := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO albums(id,artist_id,title,year,artwork_path) VALUES(?,?,?,?,?)`)
-	insertTrack, _ := tx.PrepareContext(ctx, `INSERT OR REPLACE INTO tracks(id,album_id,artist_id,title,album_title,artist_name,track_number,disc_number,duration_ms,file_path,file_size,file_mtime,codec,bitrate) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	insertTrack, _ := tx.PrepareContext(ctx, `INSERT OR REPLACE INTO tracks(id,album_id,artist_id,title,album_title,artist_name,year,track_number,disc_number,duration_ms,file_path,file_size,file_mtime,codec,bitrate) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 
 	scanned := 0
 	for _, root := range p.cfg.Roots {
@@ -204,13 +277,14 @@ func (p *Provider) scan(ctx context.Context) error {
 			defer f.Close()
 			meta, err := tag.ReadFrom(f)
 			var artistName, albumTitle, trackTitle string
-			var trackNo, discNo int
+			var trackNo, discNo, trackYear int
 			if err == nil {
 				artistName = meta.Artist()
 				albumTitle = meta.Album()
 				trackTitle = meta.Title()
 				trackNo, _ = meta.Track()
 				discNo, _ = meta.Disc()
+				trackYear = extractYear(meta)
 			}
 			if artistName == "" {
 				artistName = "Unknown Artist"
@@ -231,7 +305,7 @@ func (p *Provider) scan(ctx context.Context) error {
 			_, _ = insertAlbum.ExecContext(ctx, albumID, artistID, albumTitle, 0, "")
 			// Get audio metadata via ffprobe
 			audioInfo := getAudioInfo(path)
-			_, _ = insertTrack.ExecContext(ctx, trackID, albumID, artistID, trackTitle, albumTitle, artistName, trackNo, discNo, audioInfo.DurationMs, path, info.Size(), info.ModTime().Unix(), audioInfo.Codec, audioInfo.BitrateKbps)
+			_, _ = insertTrack.ExecContext(ctx, trackID, albumID, artistID, trackTitle, albumTitle, artistName, trackYear, trackNo, discNo, audioInfo.DurationMs, path, info.Size(), info.ModTime().Unix(), audioInfo.Codec, audioInfo.BitrateKbps)
 			return nil
 		})
 	}
@@ -350,7 +424,7 @@ func (p *Provider) ListTracks(ctx context.Context, albumId string, artistId stri
 		pageSize = p.cfg.PageSize
 	}
 	_, offset := parseCursor(req.Cursor)
-	query := `SELECT id,title,artist_id,artist_name,album_id,album_title,duration_ms,track_number,disc_number,codec,bitrate FROM tracks `
+	query := `SELECT id,title,artist_id,artist_name,album_id,album_title,year,duration_ms,track_number,disc_number,codec,bitrate,file_path FROM tracks `
 	var args []any
 	var clauses []string
 	if albumId != "" {
@@ -374,9 +448,11 @@ func (p *Provider) ListTracks(ctx context.Context, albumId string, artistId stri
 	var items []provider.Track
 	for rows.Next() {
 		var t provider.Track
-		if err := rows.Scan(&t.ID, &t.Title, &t.ArtistID, &t.ArtistName, &t.AlbumID, &t.AlbumTitle, &t.DurationMs, &t.TrackNo, &t.DiscNo, &t.Codec, &t.BitrateKbps); err != nil {
+		var filePath string
+		if err := rows.Scan(&t.ID, &t.Title, &t.ArtistID, &t.ArtistName, &t.AlbumID, &t.AlbumTitle, &t.Year, &t.DurationMs, &t.TrackNo, &t.DiscNo, &t.Codec, &t.BitrateKbps, &filePath); err != nil {
 			return provider.Page[provider.Track]{}, err
 		}
+		t.ArtworkRef = filePath // Use file path for artwork extraction
 		items = append(items, t)
 	}
 	next := ""
@@ -389,13 +465,15 @@ func (p *Provider) ListTracks(ctx context.Context, albumId string, artistId stri
 
 func (p *Provider) GetTrack(ctx context.Context, id string) (provider.Track, error) {
 	var t provider.Track
-	err := p.db.QueryRowContext(ctx, `SELECT id,title,artist_id,artist_name,album_id,album_title,duration_ms,track_number,disc_number,codec,bitrate,file_path FROM tracks WHERE id=?`, id).Scan(&t.ID, &t.Title, &t.ArtistID, &t.ArtistName, &t.AlbumID, &t.AlbumTitle, &t.DurationMs, &t.TrackNo, &t.DiscNo, &t.Codec, &t.BitrateKbps, new(string))
+	var filePath string
+	err := p.db.QueryRowContext(ctx, `SELECT id,title,artist_id,artist_name,album_id,album_title,year,duration_ms,track_number,disc_number,codec,bitrate,file_path FROM tracks WHERE id=?`, id).Scan(&t.ID, &t.Title, &t.ArtistID, &t.ArtistName, &t.AlbumID, &t.AlbumTitle, &t.Year, &t.DurationMs, &t.TrackNo, &t.DiscNo, &t.Codec, &t.BitrateKbps, &filePath)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return provider.Track{}, provider.ErrNotFound
 		}
 		return provider.Track{}, err
 	}
+	t.ArtworkRef = filePath // Use file path for artwork extraction
 	return t, nil
 }
 
@@ -411,7 +489,7 @@ func (p *Provider) Search(ctx context.Context, q string, req provider.ListReq) (
 
 	// Search Tracks
 	if targetType == "" || targetType == "tracks" {
-		rows, err := p.db.QueryContext(ctx, `SELECT id,title,artist_id,artist_name,album_id,album_title,duration_ms,track_number,disc_number,codec,bitrate FROM tracks WHERE lower(title) LIKE ? OR lower(artist_name) LIKE ? OR lower(album_title) LIKE ? ORDER BY artist_name LIMIT ? OFFSET ?`, pattern, pattern, pattern, pageSize+1, offset)
+		rows, err := p.db.QueryContext(ctx, `SELECT id,title,artist_id,artist_name,album_id,album_title,year,duration_ms,track_number,disc_number,codec,bitrate,file_path FROM tracks WHERE lower(title) LIKE ? OR lower(artist_name) LIKE ? OR lower(album_title) LIKE ? ORDER BY artist_name LIMIT ? OFFSET ?`, pattern, pattern, pattern, pageSize+1, offset)
 		if err != nil {
 			return provider.SearchResults{}, err
 		}
@@ -419,9 +497,11 @@ func (p *Provider) Search(ctx context.Context, q string, req provider.ListReq) (
 		var tracks []provider.Track
 		for rows.Next() {
 			var t provider.Track
-			if err := rows.Scan(&t.ID, &t.Title, &t.ArtistID, &t.ArtistName, &t.AlbumID, &t.AlbumTitle, &t.DurationMs, &t.TrackNo, &t.DiscNo, &t.Codec, &t.BitrateKbps); err != nil {
+			var filePath string
+			if err := rows.Scan(&t.ID, &t.Title, &t.ArtistID, &t.ArtistName, &t.AlbumID, &t.AlbumTitle, &t.Year, &t.DurationMs, &t.TrackNo, &t.DiscNo, &t.Codec, &t.BitrateKbps, &filePath); err != nil {
 				return provider.SearchResults{}, err
 			}
+			t.ArtworkRef = filePath // Use file path for artwork extraction
 			tracks = append(tracks, t)
 		}
 		next := ""
@@ -581,7 +661,69 @@ func extractEmbeddedLyrics(filePath string) (string, error) {
 }
 
 func (p *Provider) GetArtwork(ctx context.Context, ref string, sizePx int) (provider.Artwork, error) {
-	return provider.Artwork{}, provider.ErrNotSupported
+	// ref is the file path for filesystem provider
+	if ref == "" {
+		return provider.Artwork{}, provider.ErrNotFound
+	}
+
+	// Try to extract embedded artwork from the audio file
+	f, err := os.Open(ref)
+	if err != nil {
+		return provider.Artwork{}, fmt.Errorf("open file: %w", err)
+	}
+	defer f.Close()
+
+	meta, err := tag.ReadFrom(f)
+	if err != nil {
+		// Try folder.jpg fallback
+		return p.getFolderArtwork(ref)
+	}
+
+	pic := meta.Picture()
+	if pic == nil || len(pic.Data) == 0 {
+		// Try folder.jpg fallback
+		return p.getFolderArtwork(ref)
+	}
+
+	mimeType := pic.MIMEType
+	if mimeType == "" {
+		// Guess from data
+		if len(pic.Data) > 2 && pic.Data[0] == 0xFF && pic.Data[1] == 0xD8 {
+			mimeType = "image/jpeg"
+		} else if len(pic.Data) > 8 && string(pic.Data[1:4]) == "PNG" {
+			mimeType = "image/png"
+		} else {
+			mimeType = "image/jpeg" // Default
+		}
+	}
+
+	return provider.Artwork{
+		Data:     pic.Data,
+		MimeType: mimeType,
+	}, nil
+}
+
+// getFolderArtwork looks for folder.jpg, cover.jpg, etc. in the same directory
+func (p *Provider) getFolderArtwork(trackPath string) (provider.Artwork, error) {
+	dir := filepath.Dir(trackPath)
+	coverNames := []string{"folder.jpg", "cover.jpg", "album.jpg", "front.jpg", "folder.png", "cover.png", "album.png", "front.png"}
+
+	for _, name := range coverNames {
+		coverPath := filepath.Join(dir, name)
+		data, err := os.ReadFile(coverPath)
+		if err == nil && len(data) > 0 {
+			mimeType := "image/jpeg"
+			if strings.HasSuffix(strings.ToLower(name), ".png") {
+				mimeType = "image/png"
+			}
+			return provider.Artwork{
+				Data:     data,
+				MimeType: mimeType,
+			}, nil
+		}
+	}
+
+	return provider.Artwork{}, provider.ErrNotFound
 }
 
 func parseCursor(cur string) (string, int) {

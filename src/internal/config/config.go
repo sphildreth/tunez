@@ -225,9 +225,12 @@ func applyDefaults(cfg *Config) {
 		// Note: TOML will parse missing as false, so we treat missing as "use default"
 		cfg.Queue.Persist = true
 	}
-	// Artwork defaults
+	// Artwork defaults - enabled by default
+	if !cfg.Artwork.Enabled {
+		cfg.Artwork.Enabled = true
+	}
 	if cfg.Artwork.Width == 0 {
-		cfg.Artwork.Width = 20
+		cfg.Artwork.Width = 40
 	}
 	if cfg.Artwork.CacheDays == 0 {
 		cfg.Artwork.CacheDays = 30

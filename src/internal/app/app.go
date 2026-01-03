@@ -1277,10 +1277,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			// Fetch artwork for new track if enabled and provider supports it
+			m.logger.Debug("artwork check",
+				slog.Bool("artwork_enabled", m.cfg.Artwork.Enabled),
+				slog.Bool("cap_artwork", caps[provider.CapArtwork]),
+				slog.String("track_id", msg.track.ID),
+				slog.String("artwork_track_id", m.artworkTrackID),
+				slog.String("artwork_ref", msg.track.ArtworkRef),
+				slog.Bool("cache_available", m.artworkCache != nil),
+			)
 			if m.cfg.Artwork.Enabled && caps[provider.CapArtwork] && msg.track.ID != m.artworkTrackID && msg.track.ArtworkRef != "" {
+				m.logger.Debug("fetching artwork", slog.String("track_id", msg.track.ID), slog.String("artwork_ref", msg.track.ArtworkRef))
 				m.artworkANSI = ""
 				m.artworkLoading = true
 				cmds = append(cmds, m.fetchArtworkCmd(msg.track.ID, msg.track.ArtworkRef))
+			} else if m.cfg.Artwork.Enabled && msg.track.ArtworkRef == "" {
+				m.logger.Debug("no artwork ref for track", slog.String("track_id", msg.track.ID))
 			}
 
 			if len(cmds) > 0 {
@@ -1303,12 +1314,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case artworkMsg:
 		// Only update if this is for the current track
+		m.logger.Debug("artwork msg received",
+			slog.String("msg_track_id", msg.trackID),
+			slog.String("now_playing_id", m.nowPlaying.ID),
+			slog.Bool("has_error", msg.err != nil),
+			slog.Int("ansi_len", len(msg.ansi)),
+		)
 		if msg.trackID == m.nowPlaying.ID {
 			m.artworkTrackID = msg.trackID
 			m.artworkLoading = false
 			if msg.err != nil {
+				m.logger.Debug("artwork fetch failed", slog.Any("err", msg.err))
 				m.artworkANSI = ""
 			} else {
+				m.logger.Debug("artwork fetch success", slog.Int("ansi_len", len(msg.ansi)))
 				m.artworkANSI = msg.ansi
 			}
 		}
@@ -1744,12 +1763,11 @@ func (m Model) renderNowPlaying() string {
 				artWidth = 20
 			}
 			var artworkDisplay string
-			if m.artworkLoading {
-				artworkDisplay = artwork.Placeholder(artWidth, artWidth/2)
-			} else if m.artworkANSI != "" {
+			if m.artworkANSI != "" {
 				artworkDisplay = m.artworkANSI
 			} else {
-				artworkDisplay = artwork.Placeholder(artWidth, artWidth/2)
+				// Use default artwork (tunez logo) when loading or no artwork available
+				artworkDisplay = artwork.DefaultArtwork(artWidth, artWidth/2)
 			}
 
 			// Join artwork and track info horizontally
@@ -1798,8 +1816,12 @@ func (m Model) renderNowPlaying() string {
 	currentIdx := m.queue.CurrentIndex()
 	for i := currentIdx + 1; i < len(items) && upNextCount < 5; i++ {
 		t := items[i]
-		prefix := fmt.Sprintf("  %d) ", upNextCount+1)
-		b.WriteString(m.theme.Dim.Render(prefix) + m.theme.Text.Render(fmt.Sprintf("%s — %s", t.ArtistName, t.Title)) + "\n")
+		year := ""
+		if t.Year > 0 {
+			year = fmt.Sprintf(" [%d]", t.Year)
+		}
+		line := fmt.Sprintf("  %s - %s%s - %s", t.ArtistName, t.AlbumTitle, year, t.Title)
+		b.WriteString(m.theme.Text.Render(line) + "\n")
 		upNextCount++
 	}
 	if upNextCount == 0 {
