@@ -21,7 +21,7 @@ Tunez is a terminal-first music player with a rich, keyboard-driven TUI for brow
 | Phase | Status | Description |
 |-------|--------|-------------|
 | Phase 1 (MVP) | ✅ Complete | Core playback, browsing, TUI screens |
-| Phase 2 (v1) | 🟡 In Progress | Lyrics, artwork, caching, themes |
+| Phase 2 (v1) | ✅ Complete | Lyrics, artwork, themes, scrobbling, visualizer (cache deferred to v1.1) |
 | Phase 3 (v2) | 🔲 Not Started | Command palette, CLI flow, polish |
 
 ---
@@ -403,6 +403,53 @@ Report played tracks to Last.fm or similar services.
 
 ---
 
+### 2.7 Audio Visualizer
+
+**Priority:** MEDIUM  
+**Complexity:** Medium  
+**Status:** ✅ Complete
+
+Display real-time audio spectrum visualization in the Now Playing screen.
+
+#### Requirements
+- Real FFT-based spectrum analysis (not fake/random)
+- Integration with CAVA for audio capture
+- Graceful fallback when CAVA not installed
+- Smooth animation at ~30fps
+
+#### Implementation Tasks
+```
+[x] Create internal/visualizer package
+    - CAVA subprocess management
+    - Raw ASCII output parsing
+    - Bar normalization (0-8 range)
+
+[x] Add visualizer to app Model
+    - Initialize on startup if cava available
+    - Start when playback begins
+    - Continue ticking while playing
+
+[x] Add vizTickMsg for animation
+    - 33ms tick (~30fps)
+    - Only tick when playing
+
+[x] Update renderNowPlaying()
+    - Show live visualizer bars when running
+    - Show "(cava not installed)" fallback
+
+[x] Add tests
+    - Bar parsing
+    - Normalization
+    - Render output
+```
+
+#### Files Modified
+- `internal/visualizer/visualizer.go` - CAVA integration, bar rendering
+- `internal/visualizer/visualizer_test.go` - Unit tests
+- `internal/app/app.go` - Visualizer state, tick handling, render integration
+
+---
+
 ### Phase 2 Acceptance Criteria
 
 Phase 2 is complete when:
@@ -412,7 +459,8 @@ Phase 2 is complete when:
 4. [x] At least 2 additional themes available (mono, green, nocolor)
 5. [ ] Cache system works for offline playback (deferred to v1.1)
 6. [x] Scrobbling works with Last.fm and Melodee
-7. [x] All Phase 2 tests pass
+7. [x] Audio visualizer works when CAVA is installed
+8. [x] All Phase 2 tests pass
 
 ---
 

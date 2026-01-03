@@ -194,7 +194,7 @@ func ConvertToANSI(ctx context.Context, data []byte, width, height int) (string,
 	aspectRatio := float64(imgWidth) / float64(imgHeight)
 	charWidth := width
 	charHeight := int(float64(width) / aspectRatio)
-	
+
 	// charHeight is in "half rows" (2 pixels per char), so actual terminal rows = charHeight/2
 	terminalRows := (charHeight + 1) / 2
 	if terminalRows > height {
@@ -229,7 +229,7 @@ func ConvertToANSI(ctx context.Context, data []byte, width, height int) (string,
 			tr8, tg8, tb8 := uint8(tr>>8), uint8(tg>>8), uint8(tb>>8)
 			ta8 := uint8(ta >> 8)
 
-			// Get bottom pixel color  
+			// Get bottom pixel color
 			br, bg, bb, ba := img.At(bounds.Min.X+sampleX, bounds.Min.Y+bottomY).RGBA()
 			br8, bg8, bb8 := uint8(br>>8), uint8(bg>>8), uint8(bb>>8)
 			ba8 := uint8(ba >> 8)
@@ -248,7 +248,7 @@ func ConvertToANSI(ctx context.Context, data []byte, width, height int) (string,
 				result.WriteString(fmt.Sprintf("\x1b[38;2;%d;%d;%dm▀\x1b[0m", tr8, tg8, tb8))
 			} else {
 				// Both pixels visible - use upper half block with fg=top, bg=bottom
-				result.WriteString(fmt.Sprintf("\x1b[38;2;%d;%d;%dm\x1b[48;2;%d;%d;%dm▀\x1b[0m", 
+				result.WriteString(fmt.Sprintf("\x1b[38;2;%d;%d;%dm\x1b[48;2;%d;%d;%dm▀\x1b[0m",
 					tr8, tg8, tb8, br8, bg8, bb8))
 			}
 		}

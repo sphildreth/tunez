@@ -16,6 +16,7 @@ import (
 	"github.com/tunez/tunez/internal/queue"
 	"github.com/tunez/tunez/internal/scrobble"
 	"github.com/tunez/tunez/internal/ui"
+	"github.com/tunez/tunez/internal/visualizer"
 )
 
 type screen int
@@ -164,6 +165,9 @@ type Model struct {
 	artworkANSI    string // ANSI art for current track
 	artworkLoading bool
 	artworkTrackID string // track ID artwork was fetched for
+
+	// Visualizer state (Phase 2)
+	visualizer *visualizer.Visualizer
 }
 
 type searchFilter int
@@ -191,6 +195,16 @@ func New(cfg *config.Config, prov provider.Provider, factory ProviderFactory, pl
 	if logger == nil {
 		logger = slog.Default()
 	}
+
+	// Initialize visualizer if available
+	var viz *visualizer.Visualizer
+	if visualizer.Available() {
+		viz = visualizer.New(visualizer.Config{
+			BarCount: 16,
+			MaxValue: 1000,
+		})
+	}
+
 	return Model{
 		cfg:             cfg,
 		provider:        prov,
@@ -210,6 +224,7 @@ func New(cfg *config.Config, prov provider.Provider, factory ProviderFactory, pl
 		healthOK:        true,
 		healthDetails:   "OK",
 		startupOpts:     opts,
+		visualizer:      viz,
 	}
 }
 
@@ -449,6 +464,16 @@ func (m Model) fetchArtworkCmd(trackID, artworkRef string) tea.Cmd {
 
 		return artworkMsg{trackID: trackID, ansi: ansi}
 	}
+}
+
+// vizTickMsg triggers a visualizer refresh
+type vizTickMsg struct{}
+
+// vizTickCmd returns a command that sends periodic tick messages for visualizer updates
+func vizTickCmd() tea.Cmd {
+	return tea.Tick(33*time.Millisecond, func(t time.Time) tea.Msg {
+		return vizTickMsg{}
+	})
 }
 
 type searchMoreMsg struct {
@@ -1294,6 +1319,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.logger.Debug("no artwork ref for track", slog.String("track_id", msg.track.ID))
 			}
 
+			// Start visualizer if available and not already running
+			if m.visualizer != nil && !m.visualizer.Running() {
+				if err := m.visualizer.Start(context.Background()); err != nil {
+					m.logger.Debug("visualizer start failed", slog.Any("err", err))
+				} else {
+					cmds = append(cmds, vizTickCmd())
+				}
+			}
+
 			if len(cmds) > 0 {
 				return m, tea.Batch(cmds...)
 			}
@@ -1330,6 +1364,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.logger.Debug("artwork fetch success", slog.Int("ansi_len", len(msg.ansi)))
 				m.artworkANSI = msg.ansi
 			}
+		}
+		return m, nil
+	case vizTickMsg:
+		// Continue ticking only if visualizer is running and we're playing
+		if m.visualizer != nil && m.visualizer.Running() && !m.paused && m.nowPlaying.ID != "" {
+			return m, vizTickCmd()
 		}
 		return m, nil
 	case playerMsg:
@@ -1803,10 +1843,15 @@ func (m Model) renderNowPlaying() string {
 
 		b.WriteString("  " + progressBar + "  " + m.theme.Dim.Render(timeStr) + "\n\n")
 
-		// Visualizer placeholder
+		// Visualizer
 		b.WriteString(m.theme.Dim.Render("  Visualizer: "))
-		vizBars := "║▁▂▃▄▅▆▇█▇▆▅▄▃▂▁║"
-		b.WriteString(m.theme.Accent.Render(vizBars) + "\n\n")
+		if m.visualizer != nil && m.visualizer.Running() {
+			vizBars := m.visualizer.Render()
+			b.WriteString(m.theme.Accent.Render(vizBars) + "\n\n")
+		} else {
+			// Static placeholder when visualizer not available
+			b.WriteString(m.theme.Dim.Render("(cava not installed)") + "\n\n")
+		}
 	}
 
 	// Up Next section
