@@ -21,19 +21,19 @@ type DiagnosticsState struct {
 	ArtworkCacheMisses int
 
 	// Player state
-	MPVConnected    bool
-	MPVReconnects   int
-	LastMPVError    string
-	LastMPVErrorAt  time.Time
+	MPVConnected   bool
+	MPVReconnects  int
+	LastMPVError   string
+	LastMPVErrorAt time.Time
 
 	// Visualizer
 	VisualizerRunning bool
 	VisualizerFPS     int
 
 	// App stats
-	StartTime     time.Time
-	LastUpdate    time.Time
-	MemoryUsage   uint64
+	StartTime      time.Time
+	LastUpdate     time.Time
+	MemoryUsage    uint64
 	GoroutineCount int
 }
 

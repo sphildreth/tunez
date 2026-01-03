@@ -308,32 +308,45 @@ func ConvertToANSI(ctx context.Context, data []byte, width, height int, quality 
 	}
 
 	// Calculate target dimensions based on scale mode
+	// Note: Terminal characters are ~2x taller than wide. Since we use half-blocks (▀),
+	// each output row represents 2 vertical pixels. So the effective pixel grid is:
+	// - width pixels horizontally (1 char = 1 pixel width)
+	// - height * 2 pixels vertically (1 char = 2 pixel heights via half-block)
+	// To display a square image as square, we need: targetWidth = targetHeight * 2
 	aspectRatio := float64(imgWidth) / float64(imgHeight)
 	targetWidth := width
 	targetHeight := height
 
 	switch scaleMode {
 	case ScaleStretch:
-		// Use exact dimensions
+		// Use exact dimensions (will distort)
 	case ScaleFill:
-		// Fill the area, may crop
-		if float64(width)/float64(height) > aspectRatio {
-			// Target is wider than image, scale to height
-			targetWidth = int(float64(height) * aspectRatio)
+		// Fill the area, may crop - scale to cover entire target area
+		// Effective target aspect = width / (height * 2) because of half-blocks
+		effectiveTargetAspect := float64(width) / (float64(height) * 2.0)
+		if effectiveTargetAspect < aspectRatio {
+			// Image is wider than target, scale to width and crop height
+			targetWidth = width
+			targetHeight = int(float64(width) / aspectRatio / 2.0)
 		} else {
-			// Target is taller than image, scale to width
-			targetHeight = int(float64(width) / aspectRatio)
+			// Image is taller than target, scale to height and crop width
+			targetHeight = height
+			targetWidth = int(float64(height) * 2.0 * aspectRatio)
 		}
 	case ScaleFit:
 		fallthrough
 	default:
-		// Fit within bounds, preserve aspect ratio
-		if float64(width)/float64(height) > aspectRatio {
-			// Target is wider than image, scale to width
-			targetHeight = int(float64(width) / aspectRatio)
+		// Fit within bounds, preserve aspect ratio - scale to fit inside target area
+		// Effective target aspect = width / (height * 2) because of half-blocks
+		effectiveTargetAspect := float64(width) / (float64(height) * 2.0)
+		if effectiveTargetAspect > aspectRatio {
+			// Target is wider than image, constrain by height
+			targetHeight = height
+			targetWidth = int(float64(height) * 2.0 * aspectRatio)
 		} else {
-			// Target is taller than image, scale to height
-			targetWidth = int(float64(height) * aspectRatio)
+			// Target is taller than image, constrain by width
+			targetWidth = width
+			targetHeight = int(float64(width) / aspectRatio / 2.0)
 		}
 	}
 

@@ -22,8 +22,8 @@ func ThemeNames() []string {
 
 // Re-export theme constructors for direct access
 var (
-	Rainbow      = themes.Rainbow
-	Monochrome   = themes.Monochrome
+	Rainbow       = themes.Rainbow
+	Monochrome    = themes.Monochrome
 	GreenTerminal = themes.GreenTerminal
-	NoColor      = themes.NoColor
+	NoColor       = themes.NoColor
 )

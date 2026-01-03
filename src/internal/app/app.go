@@ -1762,15 +1762,37 @@ func (m Model) renderTopBar(width int) string {
 	queueInfo := fmt.Sprintf("Queue: %d", m.queue.Len())
 
 	// Help hint
-	helpHint := m.theme.Dim.Render("[? Help]")
+	helpHint := m.theme.Dim.Render("[?]")
 
-	// Build top bar
-	left := m.theme.Title.Render("♪ Tunez") + "  " + m.theme.Dim.Render(providerInfo)
+	// Build top bar - right side has priority (queue info is important)
 	right := health + "  " + queueInfo + "  " + helpHint
+	rightLen := lipgloss.Width(right)
+
+	// Calculate available space for left side
+	availableForLeft := width - rightLen - 6 // 6 for padding/borders and min spacing
+
+	// Build left side, truncating provider info if needed
+	title := m.theme.Title.Render("♪ Tunez")
+	titleLen := lipgloss.Width(title)
+
+	var left string
+	if availableForLeft > titleLen+10 {
+		// Enough room for title + some provider info
+		maxProviderLen := availableForLeft - titleLen - 4
+		if maxProviderLen > 0 && len(providerInfo) > maxProviderLen {
+			providerInfo = providerInfo[:maxProviderLen-1] + "…"
+		}
+		left = title + "  " + m.theme.Dim.Render(providerInfo)
+	} else if availableForLeft > titleLen {
+		// Only room for title
+		left = title
+	} else {
+		// Very narrow - just show minimal title
+		left = m.theme.Title.Render("♪")
+	}
 
 	// Calculate spacing
 	leftLen := lipgloss.Width(left)
-	rightLen := lipgloss.Width(right)
 	spaces := width - leftLen - rightLen - 4
 	if spaces < 1 {
 		spaces = 1
