@@ -4,13 +4,42 @@
 **Last updated:** 2026-01-03  
 **Stack (normative):** Go + Bubble Tea + mpv
 
+**IMPORTANT:** See [PHASE_PLAN.md](PHASE_PLAN.md) for the comprehensive phase breakdown that maps ALL requirements to deliverable phases.
+
 ## 0. Phases (Status)
 
 Use these checkboxes to track implementation status.
 
-- [x] **Phase 1 (MVP)**: Core TUI (Library/Search/Queue/Now Playing/Help), mpv playback via IPC, Filesystem + Melodee providers (browse/search/play), colorful default rainbow-like theme.
-- [ ] **Phase 2 (v1)**: Offline cache/download (provider-gated), lyrics + artwork, scrobbling, queue persistence required, additional themes (monochrome, green terminal, etc.).
-- [ ] **Phase 3 (v2)**: Command palette and other advanced UX (e.g., lyrics follow-along), deeper diagnostics/debug overlays.
+- [ ] **Phase 1 (MVP)**
+  - Player: mpv playback via IPC (play/pause/seek/next/prev/volume)
+  - Providers: Filesystem + Melodee (browse/search/play)
+  - TUI: implement the core screens from `docs/TUI_UX.md`:
+    - Splash/Loading (Screen 0)
+    - Main/Now Playing (Screen 1)
+    - Search (Screen 2)
+    - Library (Screen 3)
+    - Queue (Screen 4)
+    - Playlists (Screen 5; capability-gated)
+    - Configuration (Screens 7–9; MVP is read-only + profile selection; cache/offline is view-only and may show “unsupported”)
+    - Help overlay (Screen 10)
+    - Error toast + error modal (Screen 11)
+    - Lyrics (Screen 6) is **placeholder/disabled** in MVP (capability-gated)
+  - Theme: colorful default rainbow-like theme + `NO_COLOR` fallback
+
+- [ ] **Phase 2 (v1)**
+  - Offline cache/download (provider-gated; Config ▸ Cache/Offline becomes functional)
+  - Lyrics (capability-gated; Screen 6 becomes functional)
+  - Artwork (capability-gated)
+  - Scrobbling
+  - Queue persistence **required**
+  - Additional themes (monochrome, green terminal, etc.)
+
+- [ ] **Phase 3 (v2)**
+  - Command palette and other advanced UX (e.g., lyrics follow-along)
+  - Deeper diagnostics/debug overlays
+  - CLI “play then launch TUI” flow (Screen 12; if not shipped earlier)
+
+**Implementation rule:** every MUST/SHOULD requirement below must map to at least one phase (MVP/v1/v2). Where a feature is capability-gated, the phase still includes the UX behavior (hidden/disabled + clear messaging when unsupported).
 
 ## 1. Overview
 
@@ -111,18 +140,26 @@ Tunez uses mpv for playback.
 - Persist queue across restarts (optional for MVP; required for v1)
 
 ### 4.6 TUI screens
-Tunez MUST provide:
-- Splash/loading screen
-- Main / Now Playing
-- Search
-- Library (artists/albums/tracks)
-- Queue
-- Playlists (capability-gated)
-- Lyrics (capability-gated; placeholder/disabled in MVP, functional in v1)
-- Configuration (main + profiles; view-only in MVP)
-- Help / keybindings overlay
-- Error toast + error modal
-- CLI “play then launch TUI” flow (optional for MVP; planned)
+Tunez MUST provide the screen set defined in `docs/TUI_UX.md`, implemented across phases as follows:
+
+**Phase 1 (MVP)**
+- Splash/loading screen (TUI_UX Screen 0)
+- Main / Now Playing (Screen 1)
+- Search (Screen 2)
+- Library (artists/albums/tracks) (Screen 3)
+- Queue (Screen 4)
+- Playlists (Screen 5; capability-gated)
+- Configuration (Screens 7–9): view-only + profile selection in MVP; cache/offline is view-only and may show “unsupported”
+- Help / keybindings overlay (Screen 10)
+- Error toast + error modal (Screen 11)
+- Lyrics (Screen 6): placeholder/disabled in MVP (capability-gated)
+
+**Phase 2 (v1)**
+- Lyrics (Screen 6): functional (capability-gated)
+- Config ▸ Cache/Offline (Screen 9): functional controls (provider-gated)
+
+**Phase 3 (v2)**
+- CLI “play then launch TUI” flow (Screen 12) if not shipped earlier
 
 See `docs/TUI_UX.md` for the full screen specification.
 
@@ -177,7 +214,7 @@ MVP is accepted when all items below are true:
 1. **mpv playback control works** (play/pause/seek/next/prev/volume) via IPC on Linux/macOS/Windows.
 2. **Filesystem Provider works**: scan/index local library; browse artists/albums/tracks; play a local file.
 3. **Melodee API Provider works**: authenticate; browse artists/albums/playlists; search; play a streamed track.
-4. **TUI is complete**: Now Playing, Library, Search, Queue, Help overlay.
+4. **TUI is complete**: Splash/Loading, Now Playing, Library, Search, Queue, Config (read-only + profile selection), Help overlay, Error toast/modal (Playlists capability-gated; Lyrics placeholder/disabled).
 5. **Config works**: load + validate config; switch profiles; keybindings apply.
 6. **No UI blocking**: long provider requests show loading state and remain cancellable.
 7. **Accessibility works**: `NO_COLOR=1` disables rainbow theme and applies a high-contrast fallback.
@@ -192,6 +229,7 @@ MVP is accepted when all items below are true:
 - Advanced library sorting/filtering (genre/year/rating)
 
 ## 8. Related Documents
+- **Phase Plan**: [PHASE_PLAN.md](PHASE_PLAN.md) — **Comprehensive phase breakdown mapping ALL requirements to deliverable phases**
 - **Technical Design**: [TECH_DESIGN.md](TECH_DESIGN.md) — Architecture overview, process model, and Bubble Tea strategy.
 - **Provider Interface**: [PROVIDERS.md](PROVIDERS.md) — Detailed contract for implementing music providers.
 - **TUI/UX Specification**: [TUI_UX.md](TUI_UX.md) — Full screen set, interactions, and keybindings.
