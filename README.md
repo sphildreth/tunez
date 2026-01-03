@@ -114,14 +114,15 @@ Or run the doctor to verify your setup:
 
 | Key | Action |
 |-----|--------|
-| `j` / `↓` | Move down |
-| `k` / `↑` | Move up |
+| `↑` / `↓` | Navigate screens |
+| `j` / `k` | Move selection down / up |
 | `Enter` | Select / Play |
 | `Tab` | Next screen |
 | `Shift+Tab` | Previous screen |
+| `Backspace` / `Esc` | Go back |
 | `/` | Search |
 | `?` | Help |
-| `Ctrl+C` | Quit |
+| `q` / `Ctrl+C` | Quit |
 
 ### Playback
 
@@ -259,12 +260,32 @@ Contributions are welcome! Please read the following before submitting:
 3. Run `go test ./...` before submitting
 4. Follow existing code style (`go fmt`)
 
+### Development commands
+
 ```bash
 cd src
-go test ./...      # Run tests
+go test ./...      # Run all tests
+go test ./... -v   # Verbose output
 go fmt ./...       # Format code
 go vet ./...       # Check for issues
 ```
+
+### TUI Testing with teatest
+
+Tunez uses [teatest](https://github.com/charmbracelet/x/tree/main/exp/teatest) for TUI integration testing. Tests use mock providers with fixture data—no real config or music files needed.
+
+```bash
+# Run golden file tests (compares rendered UI to snapshots)
+go test ./internal/app/... -run TestScreensGolden -v
+
+# Update golden files after intentional UI changes
+go test ./internal/app/... -run TestScreensGolden -update
+
+# Test keybindings
+go test ./internal/app/... -run TestKeyboardShortcuts -v
+```
+
+Golden files are stored in `src/internal/app/testdata/` and track expected screen output. See [docs/TEST_STRATEGY.md](docs/TEST_STRATEGY.md) for full details.
 
 ## License
 

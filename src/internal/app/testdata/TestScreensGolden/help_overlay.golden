@@ -1,0 +1,39 @@
+╭────────────────────────────────────────────────────────╮
+│   ═══ Help / Keybindings ═══                           │
+│                                                        │
+│ Global                                                 │
+│   tab/shift+tab : Switch screens                       │
+│   ?             : Toggle help                          │
+│   ctrl+c        : Quit                                 │
+│                                                        │
+│ Player                                                 │
+│   space         : Play/Pause                           │
+│   n / p         : Next / Previous track                │
+│   h / l         : Seek -5s / +5s                       │
+│   H / L         : Seek -30s / +30s                     │
+│   - / +         : Volume Down / Up                     │
+│   m             : Mute                                 │
+│   s             : Toggle Shuffle                       │
+│   r             : Cycle Repeat (off/all/one)           │
+│                                                        │
+│ Navigation                                             │
+│   j / k         : Move selection down / up             │
+│   enter         : Select / Play / Drill down           │
+│   backspace     : Go back (Library)                    │
+│                                                        │
+│ Search                                                 │
+│   /             : Enter search mode                    │
+│   f             : Cycle filter (Tracks/Albums/Artists) │
+│                                                        │
+│ Queue                                                  │
+│   x             : Remove item                          │
+│   u / d         : Move item up / down                  │
+│   C             : Clear queue                          │
+│   P             : Play next (add after current)        │
+│                                                        │
+│ Library                                                │
+│   a             : Add to queue                         │
+│   A             : Add to queue (play next)             │
+│                                                        │
+│ Press ? or Esc to close                                │
+╰────────────────────────────────────────────────────────╯

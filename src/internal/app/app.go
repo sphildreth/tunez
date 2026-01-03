@@ -441,6 +441,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		key := msg.String()
 
+		// ESC closes help overlay or goes back
+		if key == "esc" {
+			if m.showHelp {
+				m.showHelp = false
+				return m, nil
+			}
+			// ESC can also go back in library navigation
+			if m.screen == screenLibrary {
+				if len(m.tracks) > 0 {
+					m.tracks = nil
+					m.tracksCursor = ""
+					m.currentAlbumID = ""
+					m.selection = 0
+					return m, nil
+				}
+				if len(m.albums) > 0 {
+					m.albums = nil
+					m.albumsCursor = ""
+					m.currentArtistID = ""
+					m.selection = 0
+					return m, nil
+				}
+			}
+			return m, nil
+		}
+
 		// Handle configurable keybindings first (player controls)
 		if matchKey(key, m.cfg.Keybindings.Quit) {
 			return m, tea.Quit
@@ -538,35 +564,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.addNextTrackCmd(t)
 			}
 		case "tab":
-			m.screen = (m.screen + 1) % 8
-			if m.screen == screenLoading {
-				m.screen++
-			}
-			// Skip screens if capability missing
-			if m.screen == screenPlaylists && !m.provider.Capabilities()[provider.CapPlaylists] {
-				m.screen++
-			}
-			if m.screen == screenLyrics && !m.provider.Capabilities()[provider.CapLyrics] {
-				m.screen++
-			}
+			m.screen = m.nextScreen()
 			m.selection = 0
 			if m.screen == screenPlaylists && len(m.playlists) == 0 {
 				return m, m.loadPlaylistsCmd("")
 			}
 			return m, nil
 		case "shift+tab":
-			m.screen--
-			if m.screen == screenLyrics && !m.provider.Capabilities()[provider.CapLyrics] {
-				m.screen--
-			}
-			if m.screen == screenPlaylists && !m.provider.Capabilities()[provider.CapPlaylists] {
-				m.screen--
-			}
-			if m.screen <= screenLoading {
-				m.screen = screenConfig
+			m.screen = m.prevScreen()
+			m.selection = 0
+			if m.screen == screenPlaylists && len(m.playlists) == 0 {
+				return m, m.loadPlaylistsCmd("")
 			}
 			return m, nil
-		case "j", "down":
+		case "down":
+			// Down arrow navigates between screens
+			m.screen = m.nextScreen()
+			m.selection = 0
+			if m.screen == screenPlaylists && len(m.playlists) == 0 {
+				return m, m.loadPlaylistsCmd("")
+			}
+			return m, nil
+		case "up":
+			// Up arrow navigates between screens
+			m.screen = m.prevScreen()
+			m.selection = 0
+			if m.screen == screenPlaylists && len(m.playlists) == 0 {
+				return m, m.loadPlaylistsCmd("")
+			}
+			return m, nil
+		case "j":
+			// j navigates within list content
 			if m.selection < m.currentListLen()-1 {
 				m.selection++
 			} else if m.screen == screenSearch {
@@ -594,7 +622,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, nil
-		case "k", "up":
+		case "k":
+			// k navigates within list content
 			if m.selection > 0 {
 				m.selection--
 			}
@@ -1212,33 +1241,12 @@ func (m Model) renderLibrary() string {
 
 	// Determine current view and show header with pagination
 	var viewTitle string
-	var itemCount, totalCount int
+	var items []string
+	var totalCount int
 
 	if len(m.tracks) > 0 {
 		viewTitle = "Tracks"
-		itemCount = len(m.tracks)
-		totalCount = itemCount // Will need provider total when available
-	} else if len(m.albums) > 0 {
-		viewTitle = "Albums"
-		itemCount = len(m.albums)
-		totalCount = itemCount
-	} else {
-		viewTitle = "Artists"
-		itemCount = len(m.artists)
-		totalCount = itemCount
-	}
-
-	// Header with view mode and pagination
-	header := fmt.Sprintf("%s", viewTitle)
-	if totalCount > 0 {
-		header += fmt.Sprintf("  %d/%d", m.selection+1, totalCount)
-	}
-	b.WriteString(m.theme.Title.Render(header) + "\n")
-
-	// List box content
-	var listContent strings.Builder
-
-	if len(m.tracks) > 0 {
+		totalCount = len(m.tracks)
 		for i, t := range m.tracks {
 			prefix := "   "
 			style := m.theme.Text
@@ -1248,9 +1256,11 @@ func (m Model) renderLibrary() string {
 			}
 			dur := fmt.Sprintf("%d:%02d", t.DurationMs/60000, (t.DurationMs/1000)%60)
 			line := fmt.Sprintf("%s%02d  %s — %s  %s", prefix, i+1, t.ArtistName, t.Title, m.theme.Dim.Render(dur))
-			listContent.WriteString(style.Render(line) + "\n")
+			items = append(items, style.Render(line))
 		}
 	} else if len(m.albums) > 0 {
+		viewTitle = "Albums"
+		totalCount = len(m.albums)
 		for i, a := range m.albums {
 			prefix := " ▢ "
 			style := m.theme.Text
@@ -1259,9 +1269,11 @@ func (m Model) renderLibrary() string {
 				style = selectedStyle
 			}
 			line := fmt.Sprintf("%s%s — %s (%d)", prefix, a.Title, a.ArtistName, a.Year)
-			listContent.WriteString(style.Render(line) + "\n")
+			items = append(items, style.Render(line))
 		}
 	} else {
+		viewTitle = "Artists"
+		totalCount = len(m.artists)
 		for i, a := range m.artists {
 			prefix := " ▢ "
 			style := m.theme.Text
@@ -1274,8 +1286,36 @@ func (m Model) renderLibrary() string {
 				albumText = "album"
 			}
 			line := fmt.Sprintf("%s%s  (%d %s)", prefix, a.Name, a.AlbumCount, albumText)
-			listContent.WriteString(style.Render(line) + "\n")
+			items = append(items, style.Render(line))
 		}
+	}
+
+	// Header with view mode and pagination
+	header := fmt.Sprintf("%s", viewTitle)
+	if totalCount > 0 {
+		header += fmt.Sprintf("  %d/%d", m.selection+1, totalCount)
+	}
+	b.WriteString(m.theme.Title.Render(header) + "\n")
+
+	// Calculate visible window (show ~20 items centered on selection)
+	visibleRows := 20
+	start := m.selection - visibleRows/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + visibleRows
+	if end > len(items) {
+		end = len(items)
+		start = end - visibleRows
+		if start < 0 {
+			start = 0
+		}
+	}
+
+	// Build visible content
+	var listContent strings.Builder
+	for i := start; i < end; i++ {
+		listContent.WriteString(items[i] + "\n")
 	}
 
 	b.WriteString(boxStyle.Render(listContent.String()))
@@ -1351,6 +1391,8 @@ func (m Model) renderSearch() string {
 			listContent.WriteString(m.theme.Dim.Render("  No results found"))
 		}
 	} else {
+		// Build items slice first for viewport calculation
+		var items []string
 		switch m.searchFilter {
 		case filterTracks:
 			for i, t := range m.searchResults.Tracks.Items {
@@ -1362,7 +1404,7 @@ func (m Model) renderSearch() string {
 				}
 				dur := fmt.Sprintf("%d:%02d", t.DurationMs/60000, (t.DurationMs/1000)%60)
 				line := fmt.Sprintf("%s%02d  %s — %s  %s", prefix, i+1, t.ArtistName, t.Title, m.theme.Dim.Render(dur))
-				listContent.WriteString(style.Render(line) + "\n")
+				items = append(items, style.Render(line))
 			}
 		case filterAlbums:
 			for i, a := range m.searchResults.Albums.Items {
@@ -1373,7 +1415,7 @@ func (m Model) renderSearch() string {
 					style = selectedStyle
 				}
 				line := fmt.Sprintf("%s%s — %s (%d)", prefix, a.Title, a.ArtistName, a.Year)
-				listContent.WriteString(style.Render(line) + "\n")
+				items = append(items, style.Render(line))
 			}
 		case filterArtists:
 			for i, a := range m.searchResults.Artists.Items {
@@ -1384,8 +1426,27 @@ func (m Model) renderSearch() string {
 					style = selectedStyle
 				}
 				line := fmt.Sprintf("%s%s", prefix, a.Name)
-				listContent.WriteString(style.Render(line) + "\n")
+				items = append(items, style.Render(line))
 			}
+		}
+
+		// Calculate visible window (show ~20 items centered on selection)
+		visibleRows := 20
+		start := m.selection - visibleRows/2
+		if start < 0 {
+			start = 0
+		}
+		end := start + visibleRows
+		if end > len(items) {
+			end = len(items)
+			start = end - visibleRows
+			if start < 0 {
+				start = 0
+			}
+		}
+
+		for i := start; i < end; i++ {
+			listContent.WriteString(items[i] + "\n")
 		}
 	}
 
@@ -1432,8 +1493,9 @@ func (m Model) renderQueue() string {
 	if len(items) == 0 {
 		listContent.WriteString(m.theme.Dim.Render("  Queue is empty. Add tracks from Library or Search."))
 	} else {
+		// Build rendered items for viewport
+		var renderedItems []string
 		for i, t := range items {
-			// Determine prefix based on selection and playing state
 			prefix := "    "
 			style := m.theme.Text
 			isPlaying := i == currentIdx
@@ -1452,7 +1514,26 @@ func (m Model) renderQueue() string {
 
 			dur := fmt.Sprintf("%d:%02d", t.DurationMs/60000, (t.DurationMs/1000)%60)
 			line := fmt.Sprintf("%s%02d  %s — %s  %s", prefix, i+1, t.ArtistName, t.Title, m.theme.Dim.Render(dur))
-			listContent.WriteString(style.Render(line) + "\n")
+			renderedItems = append(renderedItems, style.Render(line))
+		}
+
+		// Calculate visible window (show ~20 items centered on selection)
+		visibleRows := 20
+		start := m.selection - visibleRows/2
+		if start < 0 {
+			start = 0
+		}
+		end := start + visibleRows
+		if end > len(renderedItems) {
+			end = len(renderedItems)
+			start = end - visibleRows
+			if start < 0 {
+				start = 0
+			}
+		}
+
+		for i := start; i < end; i++ {
+			listContent.WriteString(renderedItems[i] + "\n")
 		}
 	}
 
@@ -1827,6 +1908,54 @@ func (m Model) currentListLen() int {
 	default:
 		return 0
 	}
+}
+
+// nextScreen returns the next navigable screen, skipping capability-gated screens
+func (m Model) nextScreen() screen {
+	next := m.screen + 1
+	caps := m.provider.Capabilities()
+
+	// Skip loading screen
+	if next == screenLoading {
+		next++
+	}
+	// Skip playlists if not supported
+	if next == screenPlaylists && !caps[provider.CapPlaylists] {
+		next++
+	}
+	// Skip lyrics if not supported
+	if next == screenLyrics && !caps[provider.CapLyrics] {
+		next++
+	}
+	// Wrap around
+	if next > screenConfig {
+		next = screenNowPlaying
+	}
+	return next
+}
+
+// prevScreen returns the previous navigable screen, skipping capability-gated screens
+func (m Model) prevScreen() screen {
+	prev := m.screen - 1
+	caps := m.provider.Capabilities()
+
+	// Wrap around
+	if prev <= screenLoading {
+		prev = screenConfig
+	}
+	// Skip lyrics if not supported
+	if prev == screenLyrics && !caps[provider.CapLyrics] {
+		prev--
+	}
+	// Skip playlists if not supported
+	if prev == screenPlaylists && !caps[provider.CapPlaylists] {
+		prev--
+	}
+	// Skip loading screen
+	if prev == screenLoading {
+		prev = screenConfig
+	}
+	return prev
 }
 
 func clamp(v, min, max int) int {

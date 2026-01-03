@@ -1,0 +1,24 @@
+ ♪ Tunez  Provider:  ()                              ● OK  Queue: 0  [? Help]   
+────────────────────────────────────────────────────────────────────────────────
+  ♪ Now Playing │ Config                                                        
+  ⌕ Search      │                                                               
+  ≡ Library     │ Sections                                                      
+  ☰ Queue       │ ╭──────────────────────────╮                                  
+  ⚙ Config      │ │  ▣ Providers & Profiles  │                                  
+                │ │  ▢ Theme & ANSI          │                                  
+                │ │  ▢ Keybindings           │                                  
+                │ │  ▢ Cache / Offline       │                                  
+                │ │  ▢ Logging & Diagnostics │                                  
+                │ │                          │                                  
+                │ ╰──────────────────────────╯                                  
+                │                                                               
+                │ Details                                                       
+                │ ╭───────────────────╮                                         
+                │ │ Total Profiles: 0 │                                         
+                │ │                   │                                         
+                │ ╰───────────────────╯                                         
+                │                                                               
+                  Config file: ~/.config/tunez/config.toml                      
+                  [Enter]Open Section  [Esc]Back                                
+⏵  (not playing)    Vol: 0%                                                     
+[Space]Play/Pause [n/p]Next/Prev [h/l]Seek [+/-]Vol [s]Shuffle [r]Repeat [?]Help
