@@ -529,8 +529,8 @@ func DefaultArtwork(width, height int) string {
 	}
 	defaultArtworkCacheMu.Unlock()
 
-	// Convert embedded PNG to ANSI (use medium quality, fit mode)
-	result, err := ConvertToANSI(context.Background(), defaultArtworkPNG, width, height, QualityMedium, ScaleFit)
+	// Convert embedded PNG using best available protocol (auto-detects kitty/sixel/ansi)
+	result, err := Render(context.Background(), defaultArtworkPNG, width, height, QualityMedium, ScaleFit)
 	if err != nil {
 		// Fallback to text placeholder if conversion fails
 		return Placeholder(width, height)

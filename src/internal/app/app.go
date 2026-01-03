@@ -451,20 +451,36 @@ func (m Model) fetchArtworkCmd(trackID, artworkRef string) tea.Cmd {
 
 		width := m.cfg.Artwork.Width
 		if width <= 0 {
-			width = 20
+			width = 40
 		}
 		height := m.cfg.Artwork.Height
 		if height <= 0 {
-			height = 10
+			height = 20
 		}
 
 		// Ensure artwork doesn't exceed available width
 		availableWidth := m.width - 20
 		if availableWidth > 0 && width > availableWidth {
 			width = availableWidth
-			if m.cfg.Artwork.Height == 0 {
-				height = width / 2
-			}
+		}
+
+		// Ensure artwork doesn't exceed available height
+		// Reserve space for: top bar, progress bar, visualizer, up next, hints, player bar
+		availableHeight := m.height - 22
+		if availableHeight < 8 {
+			availableHeight = 8
+		}
+		if height > availableHeight {
+			height = availableHeight
+		}
+
+		// Maintain square aspect ratio
+		expectedWidth := height * 2
+		expectedHeight := width / 2
+		if width > expectedWidth {
+			width = expectedWidth
+		} else if height > expectedHeight {
+			height = expectedHeight
 		}
 
 		// Parse quality and scale mode
@@ -501,18 +517,18 @@ func (m Model) fetchArtworkCmd(trackID, artworkRef string) tea.Cmd {
 			return artworkMsg{trackID: trackID, err: err}
 		}
 
-		// Convert to ANSI
-		ansi, err := artwork.ConvertToANSI(ctx, art.Data, width, height, quality, scaleMode)
+		// Convert using best available protocol (auto-detects kitty/sixel/ansi)
+		rendered, err := artwork.Render(ctx, art.Data, width, height, quality, scaleMode)
 		if err != nil {
 			return artworkMsg{trackID: trackID, err: err}
 		}
 
 		// Cache result
 		if m.artworkCache != nil {
-			_ = m.artworkCache.Set(artworkRef, width, height, quality, scaleMode, ansi)
+			_ = m.artworkCache.Set(artworkRef, width, height, quality, scaleMode, rendered)
 		}
 
-		return artworkMsg{trackID: trackID, ansi: ansi}
+		return artworkMsg{trackID: trackID, ansi: rendered}
 	}
 }
 
@@ -1968,11 +1984,11 @@ func (m Model) renderNowPlaying() string {
 		if m.cfg.Artwork.Enabled {
 			artWidth := m.cfg.Artwork.Width
 			if artWidth <= 0 {
-				artWidth = 20
+				artWidth = 40
 			}
 			artHeight := m.cfg.Artwork.Height
 			if artHeight <= 0 {
-				artHeight = 10
+				artHeight = 20
 			}
 
 			// Ensure artwork doesn't exceed available width (leave some margin)
@@ -1980,13 +1996,26 @@ func (m Model) renderNowPlaying() string {
 			availableWidth := m.width - 20 // Conservative estimate for borders/padding
 			if availableWidth > 0 && artWidth > availableWidth {
 				artWidth = availableWidth
-				// Recalculate height to maintain aspect ratio
-				if m.cfg.Artwork.Height > 0 {
-					// If user explicitly set height, preserve it
-					artHeight = m.cfg.Artwork.Height
-				} else {
-					artHeight = artWidth / 2
-				}
+			}
+
+			// Ensure artwork doesn't exceed available height
+			// Reserve space for: top bar (2), progress bar (3), visualizer (5), up next (7), hints (2), player bar (3) = ~22 lines
+			availableHeight := m.height - 22
+			if availableHeight < 8 {
+				availableHeight = 8 // Minimum artwork height
+			}
+			if artHeight > availableHeight {
+				artHeight = availableHeight
+			}
+
+			// Maintain square aspect ratio (width should be ~2x height for square look)
+			// If we constrained one dimension, adjust the other to maintain aspect
+			expectedWidth := artHeight * 2
+			expectedHeight := artWidth / 2
+			if artWidth > expectedWidth {
+				artWidth = expectedWidth
+			} else if artHeight > expectedHeight {
+				artHeight = expectedHeight
 			}
 
 			var artworkDisplay string

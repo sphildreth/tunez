@@ -233,13 +233,13 @@ func applyDefaults(cfg *Config) {
 		cfg.Artwork.Enabled = true
 	}
 	if cfg.Artwork.Width == 0 {
-		cfg.Artwork.Width = 20 // Reverted to smaller default
+		cfg.Artwork.Width = 40 // 40 chars wide for decent resolution
 	}
 	if cfg.Artwork.Height == 0 {
-		cfg.Artwork.Height = 10 // Reverted to smaller default
+		cfg.Artwork.Height = 20 // 20 rows (40 pixels with half-blocks) for square aspect
 	}
 	if cfg.Artwork.Quality == "" {
-		cfg.Artwork.Quality = "medium"
+		cfg.Artwork.Quality = "high"
 	}
 	if cfg.Artwork.ScaleMode == "" {
 		cfg.Artwork.ScaleMode = "fit"

@@ -337,6 +337,22 @@ func runDoctor(cfg *config.Config, logger *slog.Logger) {
 		printCheck("cava", "OK", true, version)
 	}
 
+	// Check terminal graphics protocol
+	fmt.Println()
+	protocol := artwork.DetectProtocol()
+	var protocolDesc string
+	switch protocol {
+	case artwork.ProtocolKitty:
+		protocolDesc = "Kitty graphics protocol - pixel-perfect images"
+		printCheck("Graphics", string(protocol), true, protocolDesc)
+	case artwork.ProtocolSixel:
+		protocolDesc = "Sixel graphics - high-quality images"
+		printCheck("Graphics", string(protocol), true, protocolDesc)
+	default:
+		protocolDesc = "ANSI half-blocks - universal fallback"
+		printCheck("Graphics", string(protocol), true, protocolDesc)
+	}
+
 	fmt.Println()
 
 	// Check profile

@@ -32,6 +32,7 @@ Tunez is a **keyboard-driven terminal music player** written in Go. It features 
 - 🎵 **Beautiful TUI** — Rainbow-colored interface with smooth navigation
 - ⚡ **Responsive** — Non-blocking UI, all I/O happens in the background
 - 🎧 **High-quality playback** — Powered by mpv with gapless playback support
+- 🖼️ **Album artwork** — Auto-detects terminal graphics (Sixel/Kitty) for pixel-perfect images
 - 🔀 **Queue management** — Add, remove, reorder, shuffle, and repeat
 - 🔍 **Fast search** — Search across tracks, albums, and artists
 - 📚 **Multiple providers** — Local filesystem or Melodee API server
@@ -240,6 +241,59 @@ no_emoji = true
 ### Create your own theme
 
 Want to create a custom theme? See the [Theme Contributor Guide](src/internal/ui/themes/README.md) for step-by-step instructions.
+
+## Album Artwork
+
+Tunez displays album artwork in the Now Playing screen. The quality depends on your terminal's graphics capabilities, which are **automatically detected** at startup.
+
+### Graphics Protocols
+
+| Protocol | Quality | Terminals |
+|----------|---------|-----------|
+| **Kitty** | Pixel-perfect | Kitty |
+| **Sixel** | High quality | iTerm2, WezTerm, foot, mlterm, Konsole, Windows Terminal, xterm (with sixel) |
+| **ANSI** | Good (half-blocks) | All terminals (fallback) |
+
+Run `tunez --doctor` to see which graphics protocol your terminal supports:
+
+```
+$ tunez --doctor
+┌─────────────────────────────────────────┐
+│           Tunez Doctor Report           │
+└─────────────────────────────────────────┘
+
+  ✓ Config file:    OK
+  ✓ mpv:            OK (mpv 0.37.0)
+  ✓ ffprobe:        OK (6.1.1)
+  ✓ cava:           OK (0.10.1)
+
+  ✓ Graphics:       sixel (Sixel graphics - high-quality images)
+```
+
+### Artwork Configuration
+
+```toml
+[artwork]
+enabled = true
+width = 40       # Width in terminal columns
+height = 20      # Height in terminal rows
+quality = "high" # low, medium, high
+scale_mode = "fit" # fit, fill, stretch
+```
+
+The artwork size automatically adjusts to fit your terminal window while preserving aspect ratio.
+
+### Supported Terminals for Best Quality
+
+For **pixel-perfect album artwork**, use one of these terminals:
+
+- **[Kitty](https://sw.kovidgoyal.net/kitty/)** — Best quality, native graphics protocol
+- **[iTerm2](https://iterm2.com/)** (macOS) — Sixel support
+- **[WezTerm](https://wezfurlong.org/wezterm/)** — Cross-platform, Sixel support
+- **[foot](https://codeberg.org/dnkl/foot)** — Fast Wayland terminal, Sixel support
+- **[Windows Terminal](https://github.com/microsoft/terminal)** — Sixel support in recent versions
+
+Other terminals will use ANSI half-block characters, which still provide recognizable artwork.
 
 ## Documentation
 
