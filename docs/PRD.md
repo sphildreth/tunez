@@ -1,8 +1,16 @@
 # Tunez — Product Requirements Document (PRD)
 
 **Status:** Draft  
-**Last updated:** 2026-01-02  
+**Last updated:** 2026-01-03  
 **Stack (normative):** Go + Bubble Tea + mpv
+
+## 0. Phases (Status)
+
+Use these checkboxes to track implementation status.
+
+- [ ] **Phase 1 (MVP)**: Core TUI (Library/Search/Queue/Now Playing/Help), mpv playback via IPC, Filesystem + Melodee providers (browse/search/play), colorful default rainbow-like theme.
+- [ ] **Phase 2 (v1)**: Offline cache/download (provider-gated), lyrics + artwork, scrobbling, queue persistence required, additional themes (monochrome, green terminal, etc.).
+- [ ] **Phase 3 (v2)**: Command palette and other advanced UX (e.g., lyrics follow-along), deeper diagnostics/debug overlays.
 
 ## 1. Overview
 
@@ -105,13 +113,19 @@ Tunez uses mpv for playback.
 ### 4.6 TUI screens
 Tunez MUST provide:
 - Splash/loading screen
-- Now Playing
-- Search results
+- Main / Now Playing
+- Search
 - Library (artists/albums/tracks)
-- Playlists (capability-gated)
 - Queue
+- Playlists (capability-gated)
+- Lyrics (capability-gated)
+- Configuration (main + profiles; view-only in MVP)
 - Help / keybindings overlay
-- Configuration (view-only in MVP; edit via file is acceptable)
+- Error toast + error modal
+- CLI “play then launch TUI” flow (optional for MVP; planned)
+
+See `docs/TUI_UX.md` for the full screen specification.
+
 
 ### 4.7 Configuration & profiles
 **MUST**
@@ -122,6 +136,11 @@ Tunez MUST provide:
   - UI settings (theme, page sizes)
 - Tunez MUST validate config on startup and show actionable errors without leaking secrets.
 - Tunez MUST support selecting an active profile at runtime (menu).
+
+**MUST (UX theme)**
+- The default UI theme MUST be intentionally very colorful, with rainbow-like ANSI effects (high-saturation accents across the UI).
+- Tunez MUST support additional themes later (v1+), including at least monochromatic and “green terminal” styles.
+- Theme selection MUST be configurable (e.g., `ui.theme`), with the colorful theme as the default when unset.
 
 **SHOULD**
 - A `tunez config init` command that writes an example config.
@@ -166,4 +185,5 @@ MVP is accepted when all items below are true:
 - Artwork (inline placeholders + optional image-to-ANSI)
 - Scrobbling (e.g., Last.fm)
 - Playlists create/edit (provider-gated)
+- Additional UI themes (monochrome, green terminal, etc.)
 - Advanced library sorting/filtering (genre/year/rating)

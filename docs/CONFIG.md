@@ -1,6 +1,6 @@
 # Tunez — Configuration
 
-**Last updated:** 2026-01-02
+**Last updated:** 2026-01-03
 
 Tunez uses a TOML config file: `config.toml`.
 
@@ -13,6 +13,7 @@ active_profile = "home-files"
 [ui]
 page_size = 100
 no_emoji = false
+theme = "rainbow"          # rainbow (default) | mono (v1+) | green (v1+) | ...
 
 [player]
 mpv_path = "mpv"
@@ -63,3 +64,7 @@ cache_db = "melodee_cache.sqlite"
 - mpv must be discoverable (PATH or `mpv_path`)
 - Filesystem roots must exist
 - Melodee base_url must be valid
+
+## UI theme (requirement)
+- The default theme is intended to be very colorful with rainbow-like ANSI effects.
+- Additional themes will be implemented later (v1+), including monochromatic and “green terminal” styles.

@@ -4,6 +4,7 @@ active_profile = "home-files"
 [ui]
 page_size = 100
 no_emoji = false
+theme = "rainbow"          # rainbow (default) | mono (v1+) | green (v1+) | ...
 
 [player]
 mpv_path = "mpv"
