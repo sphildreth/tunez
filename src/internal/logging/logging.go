@@ -11,7 +11,7 @@ import (
 // Setup creates a slog.Logger that writes to a rotating log file in the user
 // state directory. The caller is responsible for closing the file.
 func Setup() (*slog.Logger, *os.File, error) {
-	stateDir, err := defaultStateDir()
+	stateDir, err := StateDir()
 	if err != nil {
 		return nil, nil, fmt.Errorf("state dir: %w", err)
 	}
@@ -27,7 +27,8 @@ func Setup() (*slog.Logger, *os.File, error) {
 	return slog.New(handler), f, nil
 }
 
-func defaultStateDir() (string, error) {
+// StateDir returns the path to the tunez state directory (~/.config/tunez/state)
+func StateDir() (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err

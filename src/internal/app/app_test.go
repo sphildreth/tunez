@@ -80,7 +80,7 @@ func TestNavigation(t *testing.T) {
 
 	m := New(cfg, prov, func(p config.Profile) (provider.Provider, error) {
 		return prov, nil
-	}, pl, nil, theme)
+	}, pl, nil, theme, StartupOptions{})
 
 	// 1. Initial State
 	if m.screen != screenLoading {

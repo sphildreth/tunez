@@ -85,7 +85,7 @@ func createTestModel(t *testing.T) Model {
 
 	m := New(cfg, prov, func(p config.Profile) (provider.Provider, error) {
 		return prov, nil
-	}, pl, nil, theme)
+	}, pl, nil, theme, StartupOptions{})
 
 	return m
 }
@@ -295,6 +295,7 @@ func TestKeyboardShortcuts(t *testing.T) {
 	prov := newTestProvider()
 	m = initializeModel(m, prov)
 	m.screen = screenLibrary
+	m.focusedPane = paneContent // j/k work in content pane
 
 	tests := []struct {
 		name     string
@@ -325,6 +326,15 @@ func TestKeyboardShortcuts(t *testing.T) {
 			validate: func(t *testing.T, m Model) {
 				if !m.showHelp {
 					t.Error("expected help to be shown")
+				}
+			},
+		},
+		{
+			name: "tab_switches_pane",
+			key:  tea.KeyMsg{Type: tea.KeyTab},
+			validate: func(t *testing.T, m Model) {
+				if m.focusedPane != paneNav {
+					t.Errorf("expected paneNav, got %d", m.focusedPane)
 				}
 			},
 		},

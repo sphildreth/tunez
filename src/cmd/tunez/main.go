@@ -7,6 +7,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"os/exec"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -26,6 +27,10 @@ func main() {
 	cfgPath := flag.String("config", "", "config file path")
 	doctor := flag.Bool("doctor", false, "run diagnostics")
 	showVersion := flag.Bool("version", false, "print version")
+	searchArtist := flag.String("artist", "", "search for artist")
+	searchAlbum := flag.String("album", "", "search for album")
+	autoPlay := flag.Bool("play", false, "auto-play first search result")
+	randomPlay := flag.Bool("random", false, "play random songs")
 	flag.Parse()
 
 	if *showVersion {
@@ -69,9 +74,17 @@ func main() {
 	noColor := os.Getenv("NO_COLOR") != "" || cfg.UI.NoEmoji
 	theme := ui.Rainbow(noColor)
 
+	// Build startup options from CLI flags
+	startupOpts := app.StartupOptions{
+		SearchArtist: *searchArtist,
+		SearchAlbum:  *searchAlbum,
+		AutoPlay:     *autoPlay,
+		RandomPlay:   *randomPlay,
+	}
+
 	model := app.New(cfg, prov, func(p config.Profile) (provider.Provider, error) {
 		return buildProvider(p)
-	}, ctrl, profile.Settings, theme)
+	}, ctrl, profile.Settings, theme, startupOpts)
 	if _, err := tea.NewProgram(model, tea.WithAltScreen()).Run(); err != nil {
 		logger.Error("run tui", slog.Any("err", err))
 		log.Fatalf("tui: %v", err)
@@ -92,11 +105,17 @@ func buildProvider(p config.Profile) (provider.Provider, error) {
 func runDoctor(cfg *config.Config, logger *slog.Logger) {
 	fmt.Println("Tunez doctor")
 	fmt.Println("Config file OK")
-	_, err := os.Stat(cfg.Player.MPVPath)
+	mpvPath, err := exec.LookPath(cfg.Player.MPVPath)
 	if err != nil {
 		fmt.Printf("mpv path (%s): %v\n", cfg.Player.MPVPath, err)
 	} else {
-		fmt.Printf("mpv path (%s): OK\n", cfg.Player.MPVPath)
+		fmt.Printf("mpv path (%s): OK (resolved: %s)\n", cfg.Player.MPVPath, mpvPath)
+	}
+	ffprobePath, err := exec.LookPath("ffprobe")
+	if err != nil {
+		fmt.Printf("ffprobe: NOT FOUND (duration detection disabled)\n")
+	} else {
+		fmt.Printf("ffprobe: OK (resolved: %s)\n", ffprobePath)
 	}
 	profile, _ := cfg.ProfileByID(cfg.ActiveProfile)
 	prov, err := buildProvider(profile)

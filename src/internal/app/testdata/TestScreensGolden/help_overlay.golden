@@ -2,9 +2,9 @@
 │   ═══ Help / Keybindings ═══                           │
 │                                                        │
 │ Global                                                 │
-│   tab/shift+tab : Switch screens                       │
+│   tab           : Switch pane (nav ↔ content)          │
 │   ?             : Toggle help                          │
-│   ctrl+c        : Quit                                 │
+│   q / ctrl+c    : Quit                                 │
 │                                                        │
 │ Player                                                 │
 │   space         : Play/Pause                           │
@@ -17,9 +17,9 @@
 │   r             : Cycle Repeat (off/all/one)           │
 │                                                        │
 │ Navigation                                             │
-│   j / k         : Move selection down / up             │
+│   ↑/↓ or j/k    : Move up/down (context-aware)         │
 │   enter         : Select / Play / Drill down           │
-│   backspace     : Go back (Library)                    │
+│   backspace/esc : Go back (Library)                    │
 │                                                        │
 │ Search                                                 │
 │   /             : Enter search mode                    │

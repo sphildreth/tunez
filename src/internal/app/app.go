@@ -20,21 +20,29 @@ type screen int
 const (
 	screenLoading screen = iota
 	screenNowPlaying
-	screenLibrary
 	screenSearch
+	screenLibrary
 	screenQueue
 	screenPlaylists
 	screenLyrics
 	screenConfig
 )
 
+type pane int
+
+const (
+	paneNav pane = iota
+	paneContent
+)
+
 // Layout styles
 var (
-	borderColor    = lipgloss.Color("#7C7CFF")
-	accentColor    = lipgloss.Color("#FF6FF7")
-	dimColor       = lipgloss.Color("#6C6F93")
-	titleColor     = lipgloss.Color("#8EEBFF")
-	highlightColor = lipgloss.Color("#FFA7C4")
+	borderColor       = lipgloss.Color("#7C7CFF")
+	focusBorderColor  = lipgloss.Color("#FF6FF7")
+	accentColor       = lipgloss.Color("#FF6FF7")
+	dimColor          = lipgloss.Color("#6C6F93")
+	titleColor        = lipgloss.Color("#8EEBFF")
+	highlightColor    = lipgloss.Color("#FFA7C4")
 
 	topBarStyle = lipgloss.NewStyle().
 			BorderStyle(lipgloss.NormalBorder()).
@@ -46,6 +54,12 @@ var (
 			BorderStyle(lipgloss.NormalBorder()).
 			BorderRight(true).
 			BorderForeground(borderColor).
+			Padding(0, 1)
+
+	navFocusedStyle = lipgloss.NewStyle().
+			BorderStyle(lipgloss.NormalBorder()).
+			BorderRight(true).
+			BorderForeground(focusBorderColor).
 			Padding(0, 1)
 
 	mainPaneStyle = lipgloss.NewStyle().
@@ -78,6 +92,14 @@ var (
 
 type ProviderFactory func(config.Profile) (provider.Provider, error)
 
+// StartupOptions contains CLI options for startup behavior
+type StartupOptions struct {
+	SearchArtist string // --artist flag
+	SearchAlbum  string // --album flag
+	AutoPlay     bool   // --play flag
+	RandomPlay   bool   // --random flag
+}
+
 type Model struct {
 	cfg      *config.Config
 	provider provider.Provider
@@ -87,6 +109,7 @@ type Model struct {
 	theme    ui.Theme
 
 	screen          screen
+	focusedPane     pane // which pane has focus (nav or content)
 	status          string
 	errorMsg        string
 	fatalErr        error
@@ -117,6 +140,8 @@ type Model struct {
 	noEmoji         bool
 	healthOK        bool
 	healthDetails   string
+	startupOpts     StartupOptions
+	startupDone     bool // true after startup search/play is complete
 }
 
 type searchFilter int
@@ -140,7 +165,7 @@ func (f searchFilter) String() string {
 	}
 }
 
-func New(cfg *config.Config, prov provider.Provider, factory ProviderFactory, player *player.Controller, settings any, theme ui.Theme) Model {
+func New(cfg *config.Config, prov provider.Provider, factory ProviderFactory, player *player.Controller, settings any, theme ui.Theme, opts StartupOptions) Model {
 	return Model{
 		cfg:             cfg,
 		provider:        prov,
@@ -155,6 +180,7 @@ func New(cfg *config.Config, prov provider.Provider, factory ProviderFactory, pl
 		volume:          float64(cfg.Player.InitialVolume),
 		healthOK:        true,
 		healthDetails:   "OK",
+		startupOpts:     opts,
 	}
 }
 
@@ -300,6 +326,123 @@ func (m Model) searchMoreCmd(q, cursor string) tea.Cmd {
 		defer cancel()
 		res, err := m.provider.Search(ctx, q, provider.ListReq{Cursor: cursor, PageSize: m.cfg.UI.PageSize})
 		return searchMoreMsg{res: res, err: err}
+	}
+}
+
+// startupSearchMsg is the result of a CLI-initiated search
+type startupSearchMsg struct {
+	tracks []provider.Track
+	err    error
+}
+
+// startupSearchCmd performs a search based on CLI flags and returns matching tracks
+func (m Model) startupSearchCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		// Build search query from artist and/or album
+		query := ""
+		if m.startupOpts.SearchArtist != "" {
+			query = m.startupOpts.SearchArtist
+		}
+		if m.startupOpts.SearchAlbum != "" {
+			if query != "" {
+				query += " "
+			}
+			query += m.startupOpts.SearchAlbum
+		}
+
+		// Search for tracks
+		res, err := m.provider.Search(ctx, query, provider.ListReq{PageSize: 100})
+		if err != nil {
+			return startupSearchMsg{err: err}
+		}
+
+		// Filter results to match artist/album if specified
+		var matchedTracks []provider.Track
+		for _, t := range res.Tracks.Items {
+			artistMatch := m.startupOpts.SearchArtist == "" ||
+				strings.Contains(strings.ToLower(t.ArtistName), strings.ToLower(m.startupOpts.SearchArtist))
+			albumMatch := m.startupOpts.SearchAlbum == "" ||
+				strings.Contains(strings.ToLower(t.AlbumTitle), strings.ToLower(m.startupOpts.SearchAlbum))
+			if artistMatch && albumMatch {
+				matchedTracks = append(matchedTracks, t)
+			}
+		}
+
+		// If no tracks found via search, try browsing artists/albums
+		if len(matchedTracks) == 0 && m.startupOpts.SearchArtist != "" {
+			// Try to find artist and get their tracks
+			artists, err := m.provider.ListArtists(ctx, provider.ListReq{PageSize: 100})
+			if err == nil {
+				for _, artist := range artists.Items {
+					if strings.Contains(strings.ToLower(artist.Name), strings.ToLower(m.startupOpts.SearchArtist)) {
+						// Found artist, get albums
+						albums, err := m.provider.ListAlbums(ctx, artist.ID, provider.ListReq{PageSize: 100})
+						if err == nil {
+							for _, album := range albums.Items {
+								albumMatch := m.startupOpts.SearchAlbum == "" ||
+									strings.Contains(strings.ToLower(album.Title), strings.ToLower(m.startupOpts.SearchAlbum))
+								if albumMatch {
+									// Get tracks from this album
+									tracks, err := m.provider.ListTracks(ctx, album.ID, artist.ID, "", provider.ListReq{PageSize: 100})
+									if err == nil {
+										matchedTracks = append(matchedTracks, tracks.Items...)
+									}
+								}
+							}
+						}
+						break
+					}
+				}
+			}
+		}
+
+		return startupSearchMsg{tracks: matchedTracks}
+	}
+}
+
+// randomPlayMsg is the result of a random tracks request
+type randomPlayMsg struct {
+	tracks []provider.Track
+	err    error
+}
+
+// randomPlayCmd fetches random tracks and queues them for playback
+func (m Model) randomPlayCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		pageSize := m.cfg.UI.PageSize
+		if pageSize <= 0 {
+			pageSize = 50
+		}
+
+		// Get all tracks with a large page size, then shuffle
+		allTracks, err := m.provider.ListTracks(ctx, "", "", "", provider.ListReq{PageSize: pageSize * 10})
+		if err != nil {
+			return randomPlayMsg{err: err}
+		}
+
+		tracks := allTracks.Items
+		if len(tracks) == 0 {
+			return randomPlayMsg{err: fmt.Errorf("no tracks found")}
+		}
+
+		// Shuffle using Fisher-Yates
+		for i := len(tracks) - 1; i > 0; i-- {
+			j := int(time.Now().UnixNano()) % (i + 1)
+			tracks[i], tracks[j] = tracks[j], tracks[i]
+		}
+
+		// Take only pageSize tracks
+		if len(tracks) > pageSize {
+			tracks = tracks[:pageSize]
+		}
+
+		return randomPlayMsg{tracks: tracks}
 	}
 }
 
@@ -547,6 +690,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Non-configurable keys use switch
 		switch key {
+		case "tab":
+			// Tab switches focus between nav and content panes
+			if m.focusedPane == paneNav {
+				m.focusedPane = paneContent
+			} else {
+				m.focusedPane = paneNav
+			}
+			return m, nil
 		case "H":
 			return m, m.seekCmd(float64(-m.cfg.Player.SeekLarge))
 		case "L":
@@ -563,69 +714,57 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if t, ok := m.selectedTrack(); ok {
 				return m, m.addNextTrackCmd(t)
 			}
-		case "tab":
-			m.screen = m.nextScreen()
-			m.selection = 0
-			if m.screen == screenPlaylists && len(m.playlists) == 0 {
-				return m, m.loadPlaylistsCmd("")
-			}
-			return m, nil
-		case "shift+tab":
-			m.screen = m.prevScreen()
-			m.selection = 0
-			if m.screen == screenPlaylists && len(m.playlists) == 0 {
-				return m, m.loadPlaylistsCmd("")
-			}
-			return m, nil
-		case "down":
-			// Down arrow navigates between screens
-			m.screen = m.nextScreen()
-			m.selection = 0
-			if m.screen == screenPlaylists && len(m.playlists) == 0 {
-				return m, m.loadPlaylistsCmd("")
-			}
-			return m, nil
-		case "up":
-			// Up arrow navigates between screens
-			m.screen = m.prevScreen()
-			m.selection = 0
-			if m.screen == screenPlaylists && len(m.playlists) == 0 {
-				return m, m.loadPlaylistsCmd("")
-			}
-			return m, nil
-		case "j":
-			// j navigates within list content
-			if m.selection < m.currentListLen()-1 {
-				m.selection++
-			} else if m.screen == screenSearch {
-				var nextCursor string
-				switch m.searchFilter {
-				case filterTracks:
-					nextCursor = m.searchResults.Tracks.NextCursor
-				case filterAlbums:
-					nextCursor = m.searchResults.Albums.NextCursor
-				case filterArtists:
-					nextCursor = m.searchResults.Artists.NextCursor
+		case "down", "j":
+			if m.focusedPane == paneNav {
+				// Navigate between screens
+				m.screen = m.nextScreen()
+				m.selection = 0
+				if m.screen == screenPlaylists && len(m.playlists) == 0 {
+					return m, m.loadPlaylistsCmd("")
 				}
-				if nextCursor != "" {
-					return m, m.searchMoreCmd(m.searchQ, nextCursor)
-				}
-			} else if m.screen == screenLibrary {
-				if len(m.tracks) > 0 && m.tracksCursor != "" {
-					return m, m.loadTracksCmd(m.currentArtistID, m.currentAlbumID, m.tracksCursor)
-				}
-				if len(m.albums) > 0 && m.albumsCursor != "" {
-					return m, m.loadAlbumsCmd(m.currentArtistID, m.albumsCursor)
-				}
-				if len(m.artists) > 0 && m.artistsCursor != "" {
-					return m, m.loadArtistsCmd(m.artistsCursor)
+			} else {
+				// Navigate within list content
+				if m.selection < m.currentListLen()-1 {
+					m.selection++
+				} else if m.screen == screenSearch {
+					var nextCursor string
+					switch m.searchFilter {
+					case filterTracks:
+						nextCursor = m.searchResults.Tracks.NextCursor
+					case filterAlbums:
+						nextCursor = m.searchResults.Albums.NextCursor
+					case filterArtists:
+						nextCursor = m.searchResults.Artists.NextCursor
+					}
+					if nextCursor != "" {
+						return m, m.searchMoreCmd(m.searchQ, nextCursor)
+					}
+				} else if m.screen == screenLibrary {
+					if len(m.tracks) > 0 && m.tracksCursor != "" {
+						return m, m.loadTracksCmd(m.currentArtistID, m.currentAlbumID, m.tracksCursor)
+					}
+					if len(m.albums) > 0 && m.albumsCursor != "" {
+						return m, m.loadAlbumsCmd(m.currentArtistID, m.albumsCursor)
+					}
+					if len(m.artists) > 0 && m.artistsCursor != "" {
+						return m, m.loadArtistsCmd(m.artistsCursor)
+					}
 				}
 			}
 			return m, nil
-		case "k":
-			// k navigates within list content
-			if m.selection > 0 {
-				m.selection--
+		case "up", "k":
+			if m.focusedPane == paneNav {
+				// Navigate between screens
+				m.screen = m.prevScreen()
+				m.selection = 0
+				if m.screen == screenPlaylists && len(m.playlists) == 0 {
+					return m, m.loadPlaylistsCmd("")
+				}
+			} else {
+				// Navigate within list content
+				if m.selection > 0 {
+					m.selection--
+				}
 			}
 			return m, nil
 		case "h", "left", "backspace":
@@ -737,6 +876,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = fmt.Sprintf("Artists loaded (%d)", len(m.artists))
 			if m.screen == screenLoading {
 				m.screen = screenNowPlaying
+				// Handle startup options if CLI flags were provided
+				if !m.startupDone {
+					if m.startupOpts.RandomPlay {
+						m.startupDone = true
+						return m, m.randomPlayCmd()
+					}
+					if m.startupOpts.SearchArtist != "" || m.startupOpts.SearchAlbum != "" {
+						m.startupDone = true
+						return m, m.startupSearchCmd()
+					}
+				}
 			}
 		}
 	case albumsMsg:
@@ -803,6 +953,49 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.status = "Loaded more results"
 		}
+	case startupSearchMsg:
+		if msg.err != nil {
+			return m.setError(msg.err)
+		}
+		if len(msg.tracks) == 0 {
+			m.status = "No tracks found for startup search"
+			return m, nil
+		}
+		// Add all tracks to queue
+		for _, t := range msg.tracks {
+			m.queue.Add(t)
+		}
+		m.status = fmt.Sprintf("Added %d tracks to queue", len(msg.tracks))
+		// If autoplay is enabled, play the first track
+		if m.startupOpts.AutoPlay {
+			m.screen = screenQueue
+			m.focusedPane = paneContent
+			return m, m.playQueueTrackCmd(0)
+		}
+		// Otherwise just show the queue
+		m.screen = screenQueue
+		m.focusedPane = paneContent
+		return m, nil
+	case randomPlayMsg:
+		if msg.err != nil {
+			return m.setError(msg.err)
+		}
+		if len(msg.tracks) == 0 {
+			m.status = "No tracks found for random play"
+			return m, nil
+		}
+		// Add all tracks to queue
+		for _, t := range msg.tracks {
+			m.queue.Add(t)
+		}
+		m.status = fmt.Sprintf("Added %d random tracks to queue", len(msg.tracks))
+		m.screen = screenQueue
+		m.focusedPane = paneContent
+		// Only auto-play if --play was also given
+		if m.startupOpts.AutoPlay {
+			return m, m.playQueueTrackCmd(0)
+		}
+		return m, nil
 	case playTrackMsg:
 		if msg.err != nil {
 			return m.setError(msg.err)
@@ -914,6 +1107,27 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 
 func (m Model) playTrackCmd(track provider.Track) tea.Cmd {
 	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		stream, err := m.provider.GetStream(ctx, track.ID)
+		if err != nil {
+			return playTrackMsg{err: err}
+		}
+		if err := m.player.Play(stream.URL, stream.Headers); err != nil {
+			return playTrackMsg{err: err}
+		}
+		return playTrackMsg{track: track}
+	}
+}
+
+func (m Model) playQueueTrackCmd(index int) tea.Cmd {
+	return func() tea.Msg {
+		items := m.queue.Items()
+		if index < 0 || index >= len(items) {
+			return playTrackMsg{err: fmt.Errorf("invalid queue index %d", index)}
+		}
+		track := items[index]
+		_ = m.queue.SetCurrent(index)
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		stream, err := m.provider.GetStream(ctx, track.ID)
@@ -1089,7 +1303,11 @@ func (m Model) renderNavigation(width, height int) string {
 	}
 
 	content := strings.Join(lines, "\n")
-	return navStyle.Width(width).Height(height).Render(content)
+	style := navStyle
+	if m.focusedPane == paneNav {
+		style = navFocusedStyle
+	}
+	return style.Width(width).Height(height).Render(content)
 }
 
 func (m Model) renderLoading(width int) string {
@@ -1731,9 +1949,9 @@ func (m Model) renderConfig() string {
 func (m Model) renderHelpOverlay() string {
 	lines := []string{
 		m.theme.Accent.Render("Global"),
-		"  tab/shift+tab : Switch screens",
+		"  tab           : Switch pane (nav ↔ content)",
 		"  ?             : Toggle help",
-		"  ctrl+c        : Quit",
+		"  q / ctrl+c    : Quit",
 		"",
 		m.theme.Accent.Render("Player"),
 		"  space         : Play/Pause",
@@ -1746,9 +1964,9 @@ func (m Model) renderHelpOverlay() string {
 		"  r             : Cycle Repeat (off/all/one)",
 		"",
 		m.theme.Accent.Render("Navigation"),
-		"  j / k         : Move selection down / up",
+		"  ↑/↓ or j/k    : Move up/down (context-aware)",
 		"  enter         : Select / Play / Drill down",
-		"  backspace     : Go back (Library)",
+		"  backspace/esc : Go back (Library)",
 		"",
 		m.theme.Accent.Render("Search"),
 		"  /             : Enter search mode",

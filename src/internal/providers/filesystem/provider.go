@@ -5,13 +5,16 @@ import (
 	"crypto/sha1"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"github.com/dhowden/tag"
+	"github.com/tunez/tunez/internal/logging"
 	"github.com/tunez/tunez/internal/provider"
 	_ "modernc.org/sqlite"
 )
@@ -105,7 +108,11 @@ func parseConfig(raw map[string]any) (Config, error) {
 		cfg.PageSize = int(v)
 	}
 	if cfg.IndexDB == "" {
-		cfg.IndexDB = filepath.Join(os.TempDir(), "tunez-filesystem.sqlite")
+		stateDir, err := logging.StateDir()
+		if err != nil {
+			stateDir = os.TempDir()
+		}
+		cfg.IndexDB = filepath.Join(stateDir, "filesystem.sqlite")
 	}
 	for i, r := range cfg.Roots {
 		abs, err := filepath.Abs(r)
@@ -202,10 +209,7 @@ func (p *Provider) scan(ctx context.Context) error {
 			trackID := hash(path)
 			_, _ = insertArtist.ExecContext(ctx, artistID, artistName, strings.ToLower(artistName))
 			_, _ = insertAlbum.ExecContext(ctx, albumID, artistID, albumTitle, 0, "")
-			var durationMs int
-			if info.Mode().IsRegular() {
-				durationMs = 0
-			}
+			durationMs := getDurationMs(path)
 			format := ""
 			if err == nil {
 				format = fmt.Sprint(meta.Format())
@@ -505,4 +509,24 @@ func parseCursor(cur string) (string, int) {
 	var off int
 	fmt.Sscanf(cur, "%d", &off)
 	return "", off
+}
+
+// getDurationMs uses ffprobe to get audio duration in milliseconds
+func getDurationMs(path string) int {
+	// Try ffprobe first (most accurate)
+	cmd := exec.Command("ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", path)
+	out, err := cmd.Output()
+	if err == nil {
+		var result struct {
+			Format struct {
+				Duration string `json:"duration"`
+			} `json:"format"`
+		}
+		if json.Unmarshal(out, &result) == nil && result.Format.Duration != "" {
+			var secs float64
+			fmt.Sscanf(result.Format.Duration, "%f", &secs)
+			return int(secs * 1000)
+		}
+	}
+	return 0
 }

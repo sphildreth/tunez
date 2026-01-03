@@ -89,8 +89,9 @@ func (c *Controller) spawnMPV(ctx context.Context) error {
 	args := []string{
 		"--idle=yes",
 		"--force-window=no",
-		"--input-ipc-server=" + c.opts.IPCPath,
 		"--no-terminal",
+		"--no-video",
+		"--input-ipc-server=" + c.opts.IPCPath,
 	}
 	args = append(args, c.opts.ExtraArgs...)
 	c.cmd = exec.CommandContext(ctx, c.opts.MPVPath, args...)
