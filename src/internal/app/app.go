@@ -214,13 +214,18 @@ func (m Model) healthCheckCmd() tea.Cmd {
 
 func (m Model) initProviderCmd() tea.Cmd {
 	return func() tea.Msg {
+		m.logger.Debug("initializing provider")
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
+		start := time.Now()
 		if err := m.provider.Initialize(ctx, m.profileSettings); err != nil {
+			m.logger.Error("provider init failed", slog.Any("err", err), slog.Duration("elapsed", time.Since(start)))
 			return initMsg{err: err}
 		}
+		m.logger.Debug("provider initialized", slog.Duration("elapsed", time.Since(start)))
 		// Load initial data
 		page, err := m.provider.ListArtists(ctx, provider.ListReq{PageSize: m.cfg.UI.PageSize})
+		m.logger.Debug("artists loaded", slog.Int("count", len(page.Items)), slog.Any("err", err))
 		return artistsMsg{page: page, err: err}
 	}
 }
@@ -836,14 +841,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			return m.handleEnter()
 		case "x":
+			m.logger.Debug("x key pressed", slog.Int("screen", int(m.screen)), slog.Int("selection", m.selection), slog.Int("focused_pane", int(m.focusedPane)))
 			if m.screen == screenQueue {
+				items := m.queue.Items()
+				if m.selection >= 0 && m.selection < len(items) {
+					m.logger.Debug("removing from queue", slog.Int("selection", m.selection), slog.Int("queue_len", m.queue.Len()), slog.String("track_title", items[m.selection].Title))
+				}
 				if err := m.queue.Remove(m.selection); err == nil {
+					m.logger.Debug("removed from queue", slog.Int("new_queue_len", m.queue.Len()))
 					if m.selection >= m.queue.Len() {
 						m.selection = m.queue.Len() - 1
 					}
 					if m.selection < 0 {
 						m.selection = 0
 					}
+				} else {
+					m.logger.Debug("remove failed", slog.Any("err", err))
 				}
 				return m, nil
 			}
@@ -1063,8 +1076,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err != nil {
 			return m.setError(msg.Err)
 		}
+		if msg.EndReason != "" {
+			m.logger.Debug("end-file event", slog.String("reason", msg.EndReason), slog.Bool("ended", msg.Ended))
+		}
 		if msg.Ended {
-			m.logger.Debug("track ended, advancing to next")
+			m.logger.Debug("track ended naturally (eof), advancing to next")
 			if t, err := m.queue.Next(); err == nil {
 				m.logger.Debug("auto-advancing to next track", slog.String("track_id", t.ID), slog.String("title", t.Title))
 				return m, m.playTrackCmd(t)

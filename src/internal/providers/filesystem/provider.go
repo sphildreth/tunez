@@ -29,10 +29,11 @@ var allowedExtensions = map[string]bool{
 }
 
 type Config struct {
-	Roots      []string
-	IndexDB    string
-	ScanOnInit bool
-	PageSize   int
+	Roots        []string
+	IndexDB      string
+	ScanOnInit   bool
+	PageSize     int
+	ScanProgress func(scanned int, current string) // optional callback for scan progress
 }
 
 type Provider struct {
@@ -61,6 +62,7 @@ func (p *Provider) Initialize(ctx context.Context, profileCfg any) error {
 		return err
 	}
 	p.cfg = cfg
+	
 	db, err := sql.Open("sqlite", cfg.IndexDB)
 	if err != nil {
 		return fmt.Errorf("open index db: %w", err)
@@ -104,8 +106,14 @@ func parseConfig(raw map[string]any) (Config, error) {
 	if v, ok := raw["scan_on_start"].(bool); ok {
 		cfg.ScanOnInit = v
 	}
+	if v, ok := raw["scan_on_init"].(bool); ok {
+		cfg.ScanOnInit = v
+	}
 	if v, ok := raw["page_size"].(int64); ok && v > 0 {
 		cfg.PageSize = int(v)
+	}
+	if cb, ok := raw["scan_progress"].(func(int, string)); ok {
+		cfg.ScanProgress = cb
 	}
 	if cfg.IndexDB == "" {
 		stateDir, err := logging.StateDir()
@@ -166,6 +174,7 @@ func (p *Provider) scan(ctx context.Context) error {
 	insertAlbum, _ := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO albums(id,artist_id,title,year,artwork_path) VALUES(?,?,?,?,?)`)
 	insertTrack, _ := tx.PrepareContext(ctx, `INSERT OR REPLACE INTO tracks(id,album_id,artist_id,title,album_title,artist_name,track_number,disc_number,duration_ms,file_path,file_size,file_mtime,codec,bitrate) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 
+	scanned := 0
 	for _, root := range p.cfg.Roots {
 		filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 			if err != nil {
@@ -180,6 +189,11 @@ func (p *Provider) scan(ctx context.Context) error {
 			info, err := d.Info()
 			if err != nil {
 				return nil
+			}
+			// Report progress
+			scanned++
+			if p.cfg.ScanProgress != nil {
+				p.cfg.ScanProgress(scanned, path)
 			}
 			f, err := os.Open(path)
 			if err != nil {
@@ -213,14 +227,9 @@ func (p *Provider) scan(ctx context.Context) error {
 			trackID := hash(path)
 			_, _ = insertArtist.ExecContext(ctx, artistID, artistName, strings.ToLower(artistName))
 			_, _ = insertAlbum.ExecContext(ctx, albumID, artistID, albumTitle, 0, "")
-			// Skip ffprobe during scan for speed - duration will be 0 initially
-			// TODO: Add background job to populate durations, or get on-demand
-			durationMs := 0
-			format := ""
-			if err == nil {
-				format = fmt.Sprint(meta.Format())
-			}
-			_, _ = insertTrack.ExecContext(ctx, trackID, albumID, artistID, trackTitle, albumTitle, artistName, trackNo, discNo, durationMs, path, info.Size(), info.ModTime().Unix(), format, 0)
+			// Get audio metadata via ffprobe
+			audioInfo := getAudioInfo(path)
+			_, _ = insertTrack.ExecContext(ctx, trackID, albumID, artistID, trackTitle, albumTitle, artistName, trackNo, discNo, audioInfo.DurationMs, path, info.Size(), info.ModTime().Unix(), audioInfo.Codec, audioInfo.BitrateKbps)
 			return nil
 		})
 	}
@@ -519,20 +528,63 @@ func parseCursor(cur string) (string, int) {
 
 // getDurationMs uses ffprobe to get audio duration in milliseconds
 func getDurationMs(path string) int {
-	// Try ffprobe first (most accurate)
-	cmd := exec.Command("ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", path)
+	info := getAudioInfo(path)
+	return info.DurationMs
+}
+
+// audioInfo holds metadata extracted from ffprobe
+type audioInfo struct {
+	DurationMs int
+	Codec      string
+	BitrateKbps int
+}
+
+// getAudioInfo uses ffprobe to extract audio metadata
+func getAudioInfo(path string) audioInfo {
+	cmd := exec.Command("ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", path)
 	out, err := cmd.Output()
-	if err == nil {
-		var result struct {
-			Format struct {
-				Duration string `json:"duration"`
-			} `json:"format"`
-		}
-		if json.Unmarshal(out, &result) == nil && result.Format.Duration != "" {
-			var secs float64
-			fmt.Sscanf(result.Format.Duration, "%f", &secs)
-			return int(secs * 1000)
+	if err != nil {
+		return audioInfo{}
+	}
+	
+	var result struct {
+		Format struct {
+			Duration string `json:"duration"`
+			BitRate  string `json:"bit_rate"`
+		} `json:"format"`
+		Streams []struct {
+			CodecName string `json:"codec_name"`
+			CodecType string `json:"codec_type"`
+		} `json:"streams"`
+	}
+	
+	if err := json.Unmarshal(out, &result); err != nil {
+		return audioInfo{}
+	}
+	
+	info := audioInfo{}
+	
+	// Duration
+	if result.Format.Duration != "" {
+		var secs float64
+		fmt.Sscanf(result.Format.Duration, "%f", &secs)
+		info.DurationMs = int(secs * 1000)
+	}
+	
+	// Bitrate (convert from bps to kbps)
+	if result.Format.BitRate != "" {
+		var bps int
+		fmt.Sscanf(result.Format.BitRate, "%d", &bps)
+		info.BitrateKbps = bps / 1000
+	}
+	
+	// Codec - find the audio stream
+	for _, s := range result.Streams {
+		if s.CodecType == "audio" && s.CodecName != "" {
+			info.Codec = s.CodecName
+			break
 		}
 	}
-	return 0
+	
+	return info
 }

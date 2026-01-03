@@ -44,7 +44,7 @@ func TestControllerPlayAndEvents(t *testing.T) {
 		evt := map[string]any{"event": "property-change", "name": "time-pos", "data": 12.5}
 		b, _ := json.Marshal(evt)
 		conn.Write(append(b, '\n'))
-		end := map[string]any{"event": "end-file"}
+		end := map[string]any{"event": "end-file", "reason": "eof"}
 		b, _ = json.Marshal(end)
 		conn.Write(append(b, '\n'))
 	}()
@@ -72,5 +72,52 @@ loop:
 	}
 	if !receivedPos || !receivedEnd {
 		t.Fatalf("expected time-pos and end-file events, got pos=%v end=%v", receivedPos, receivedEnd)
+	}
+}
+
+func TestEndFileStopReasonDoesNotTriggerEnded(t *testing.T) {
+	socketPath := filepath.Join(os.TempDir(), "tunez-player-stop-test.sock")
+	_ = os.Remove(socketPath)
+	ln, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, _ := ln.Accept()
+		accepted <- conn
+	}()
+
+	ctrl := New(Options{
+		MPVPath:        "mpv",
+		IPCPath:        socketPath,
+		DisableProcess: true,
+	})
+	if err := ctrl.Start(context.Background()); err != nil {
+		t.Fatalf("start controller: %v", err)
+	}
+	conn := <-accepted
+	defer conn.Close()
+
+	// Send end-file with "stop" reason (happens when loading new track)
+	go func() {
+		end := map[string]any{"event": "end-file", "reason": "stop"}
+		b, _ := json.Marshal(end)
+		conn.Write(append(b, '\n'))
+	}()
+
+	timeout := time.After(500 * time.Millisecond)
+	select {
+	case evt := <-ctrl.Events():
+		if evt.Ended {
+			t.Fatal("end-file with reason=stop should not set Ended=true")
+		}
+		if evt.EndReason != "stop" {
+			t.Fatalf("expected EndReason=stop, got %q", evt.EndReason)
+		}
+	case <-timeout:
+		t.Fatal("timeout waiting for event")
 	}
 }

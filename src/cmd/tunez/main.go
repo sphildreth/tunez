@@ -201,21 +201,34 @@ func runScan(cfg *config.Config, logger *slog.Logger) {
 	
 	fmt.Printf("Scanning library for profile '%s' (%s)...\n", profile.Name, profile.Provider)
 	
-	// Force scan by setting scan_on_init in settings
+	// Force scan by setting scan_on_init in settings with progress callback
 	var settings any = profile.Settings
 	if settings == nil {
-		settings = map[string]any{"scan_on_init": true}
-	} else if m, ok := settings.(map[string]any); ok {
+		settings = map[string]any{}
+	}
+	if m, ok := settings.(map[string]any); ok {
 		m["scan_on_init"] = true
+		// Add progress callback for CLI feedback
+		m["scan_progress"] = func(count int, path string) {
+			// Truncate path for display
+			displayPath := path
+			if len(displayPath) > 60 {
+				displayPath = "..." + displayPath[len(displayPath)-57:]
+			}
+			fmt.Printf("\r\033[K  Scanned %d tracks: %s", count, displayPath)
+		}
 		settings = m
 	}
 	
 	ctx := context.Background() // No timeout for scan
 	start := time.Now()
 	if err := prov.Initialize(ctx, settings); err != nil {
-		fmt.Printf("Scan error: %v\n", err)
+		fmt.Printf("\nScan error: %v\n", err)
 		return
 	}
+	
+	// Clear progress line and show completion
+	fmt.Printf("\r\033[K")
 	
 	// Get counts
 	healthy, details := prov.Health(ctx)
@@ -225,5 +238,6 @@ func runScan(cfg *config.Config, logger *slog.Logger) {
 	}
 	
 	fmt.Printf("Scan complete in %s\n", time.Since(start).Round(time.Millisecond))
+	fmt.Printf("  %s\n", details)
 	logger.Info("scan complete", slog.Duration("duration", time.Since(start)))
 }

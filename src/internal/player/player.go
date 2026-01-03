@@ -18,13 +18,14 @@ import (
 
 // Event describes playback state updates emitted by mpv.
 type Event struct {
-	TimePos  *float64
-	Duration *float64
-	Paused   *bool
-	Volume   *float64
-	Muted    *bool
-	Ended    bool
-	Err      error
+	TimePos   *float64
+	Duration  *float64
+	Paused    *bool
+	Volume    *float64
+	Muted     *bool
+	Ended     bool   // true when track ended naturally (eof)
+	EndReason string // "eof", "stop", "quit", "error", "redirect"
+	Err       error
 }
 
 // Options configures the Controller.
@@ -244,7 +245,12 @@ func (c *Controller) readLoop() {
 		case "property-change":
 			c.handlePropertyChange(msg)
 		case "end-file":
-			c.events <- Event{Ended: true}
+			// Only set Ended=true for natural end (eof), not for stop/quit/error
+			// "stop" happens when we load a new file, "quit" when mpv exits
+			c.events <- Event{
+				Ended:     msg.Reason == "eof",
+				EndReason: msg.Reason,
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -253,9 +259,10 @@ func (c *Controller) readLoop() {
 }
 
 type ipcMessage struct {
-	Event string      `json:"event"`
-	Name  string      `json:"name"`
-	Data  interface{} `json:"data"`
+	Event  string      `json:"event"`
+	Name   string      `json:"name"`
+	Data   interface{} `json:"data"`
+	Reason string      `json:"reason"` // for end-file event: "eof", "stop", "quit", "error", "redirect"
 }
 
 func (c *Controller) handlePropertyChange(msg ipcMessage) {
