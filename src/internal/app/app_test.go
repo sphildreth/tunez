@@ -154,3 +154,78 @@ func updateModel(m Model, msg tea.Msg) (Model, tea.Cmd) {
 	nm, cmd := m.Update(msg)
 	return nm.(Model), cmd
 }
+
+func TestNextPrevDoesNotAddToQueue(t *testing.T) {
+	cfg := &config.Config{
+		UI: config.UIConfig{Theme: "rainbow"},
+		Player: config.PlayerConfig{
+			SeekSmall:  5,
+			VolumeStep: 5,
+		},
+		Keybindings: config.KeybindConfig{
+			NextTrack: "n",
+			PrevTrack: "N",
+		},
+	}
+	tracks := []provider.Track{
+		{ID: "1", Title: "Track 1", ArtistID: "a1", AlbumID: "al1"},
+		{ID: "2", Title: "Track 2", ArtistID: "a1", AlbumID: "al1"},
+		{ID: "3", Title: "Track 3", ArtistID: "a1", AlbumID: "al1"},
+	}
+	prov := &mockProvider{
+		artists: []provider.Artist{{ID: "a1", Name: "Artist 1"}},
+		albums:  []provider.Album{{ID: "al1", Title: "Album 1", ArtistID: "a1"}},
+		tracks:  tracks,
+	}
+	pl := player.New(player.Options{DisableProcess: true})
+	theme := ui.Rainbow(false)
+
+	m := New(cfg, prov, func(p config.Profile) (provider.Provider, error) {
+		return prov, nil
+	}, pl, nil, theme, StartupOptions{})
+
+	// Initialize model
+	m, _ = updateModel(m, initMsg{err: nil})
+	m, _ = updateModel(m, artistsMsg{page: provider.Page[provider.Artist]{Items: prov.artists}})
+
+	// Add tracks to queue
+	m.queue.Add(tracks...)
+	initialQueueLen := m.queue.Len()
+
+	if initialQueueLen != 3 {
+		t.Fatalf("expected initial queue length 3, got %d", initialQueueLen)
+	}
+
+	// Current should be at index 0
+	if m.queue.CurrentIndex() != 0 {
+		t.Errorf("expected current index 0, got %d", m.queue.CurrentIndex())
+	}
+
+	// Press 'n' (next track) multiple times
+	for i := 0; i < 5; i++ {
+		m, _ = updateModel(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	}
+
+	// Queue length should remain the same
+	if m.queue.Len() != initialQueueLen {
+		t.Errorf("queue length changed after next: expected %d, got %d", initialQueueLen, m.queue.Len())
+	}
+
+	// Press 'N' (prev track) multiple times
+	for i := 0; i < 5; i++ {
+		m, _ = updateModel(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	}
+
+	// Queue length should still be the same
+	if m.queue.Len() != initialQueueLen {
+		t.Errorf("queue length changed after prev: expected %d, got %d", initialQueueLen, m.queue.Len())
+	}
+
+	// Verify queue items are unchanged
+	items := m.queue.Items()
+	for i, track := range tracks {
+		if items[i].ID != track.ID {
+			t.Errorf("queue item %d changed: expected %s, got %s", i, track.ID, items[i].ID)
+		}
+	}
+}

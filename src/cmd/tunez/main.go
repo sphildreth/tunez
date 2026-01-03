@@ -24,13 +24,52 @@ import (
 var version = "0.1.0"
 
 func main() {
-	cfgPath := flag.String("config", "", "config file path")
-	doctor := flag.Bool("doctor", false, "run diagnostics")
-	showVersion := flag.Bool("version", false, "print version")
-	searchArtist := flag.String("artist", "", "search for artist")
-	searchAlbum := flag.String("album", "", "search for album")
-	autoPlay := flag.Bool("play", false, "auto-play first search result")
-	randomPlay := flag.Bool("random", false, "play random songs")
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, `Tunez - A terminal music player
+
+Usage: tunez [options]
+
+Options:
+  -config string
+        Path to config file (default: ~/.config/tunez/config.toml)
+  -version
+        Print version and exit
+
+Diagnostics:
+  -doctor
+        Check configuration and dependencies (fast, no library scan)
+  -scan
+        Scan/rescan music library
+
+Playback:
+  -artist string
+        Search for artist and add matching tracks to queue
+  -album string
+        Search for album and add matching tracks to queue
+  -random
+        Add random tracks to queue (uses ui.page_size from config)
+  -play
+        Auto-play first track in queue (use with -artist, -album, or -random)
+
+Examples:
+  tunez                                    # Start interactive TUI
+  tunez --doctor                           # Check setup
+  tunez --scan                             # Rescan music library
+  tunez --random --play                    # Play random songs
+  tunez --artist "Pink Floyd" --play       # Play artist
+  tunez --artist "Queen" --album "News"    # Queue matching album
+
+`)
+	}
+
+	cfgPath := flag.String("config", "", "")
+	doctor := flag.Bool("doctor", false, "")
+	scan := flag.Bool("scan", false, "")
+	showVersion := flag.Bool("version", false, "")
+	searchArtist := flag.String("artist", "", "")
+	searchAlbum := flag.String("album", "", "")
+	autoPlay := flag.Bool("play", false, "")
+	randomPlay := flag.Bool("random", false, "")
 	flag.Parse()
 
 	if *showVersion {
@@ -54,6 +93,11 @@ func main() {
 		return
 	}
 
+	if *scan {
+		runScan(cfg, logger)
+		return
+	}
+
 	profile, _ := cfg.ProfileByID(cfg.ActiveProfile)
 	prov, err := buildProvider(profile)
 	if err != nil {
@@ -69,6 +113,7 @@ func main() {
 		logger.Error("start player", slog.Any("err", err))
 		log.Fatalf("start player: %v", err)
 	}
+	defer ctrl.Stop()
 
 	// NO_COLOR env var support per accessibility spec
 	noColor := os.Getenv("NO_COLOR") != "" || cfg.UI.NoEmoji
@@ -104,32 +149,81 @@ func buildProvider(p config.Profile) (provider.Provider, error) {
 
 func runDoctor(cfg *config.Config, logger *slog.Logger) {
 	fmt.Println("Tunez doctor")
-	fmt.Println("Config file OK")
+	fmt.Println("Config file: OK")
+	
+	// Check mpv
 	mpvPath, err := exec.LookPath(cfg.Player.MPVPath)
 	if err != nil {
-		fmt.Printf("mpv path (%s): %v\n", cfg.Player.MPVPath, err)
+		fmt.Printf("mpv (%s): NOT FOUND\n", cfg.Player.MPVPath)
 	} else {
-		fmt.Printf("mpv path (%s): OK (resolved: %s)\n", cfg.Player.MPVPath, mpvPath)
+		fmt.Printf("mpv: OK (%s)\n", mpvPath)
 	}
+	
+	// Check ffprobe
 	ffprobePath, err := exec.LookPath("ffprobe")
 	if err != nil {
-		fmt.Printf("ffprobe: NOT FOUND (duration detection disabled)\n")
+		fmt.Println("ffprobe: NOT FOUND (optional, for duration detection)")
 	} else {
-		fmt.Printf("ffprobe: OK (resolved: %s)\n", ffprobePath)
+		fmt.Printf("ffprobe: OK (%s)\n", ffprobePath)
 	}
-	profile, _ := cfg.ProfileByID(cfg.ActiveProfile)
+	
+	// Check profile
+	profile, ok := cfg.ProfileByID(cfg.ActiveProfile)
+	if !ok {
+		fmt.Printf("Active profile (%s): NOT FOUND\n", cfg.ActiveProfile)
+		return
+	}
+	fmt.Printf("Active profile: %s (%s provider)\n", profile.Name, profile.Provider)
+	
+	// Check provider can be built (but don't initialize/scan)
+	_, err = buildProvider(profile)
+	if err != nil {
+		fmt.Printf("Provider: ERROR - %v\n", err)
+		return
+	}
+	fmt.Println("Provider: OK")
+	
+	logger.Info("doctor complete")
+}
+
+func runScan(cfg *config.Config, logger *slog.Logger) {
+	profile, ok := cfg.ProfileByID(cfg.ActiveProfile)
+	if !ok {
+		fmt.Printf("Profile '%s' not found\n", cfg.ActiveProfile)
+		return
+	}
+	
 	prov, err := buildProvider(profile)
 	if err != nil {
-		fmt.Println("provider:", err)
+		fmt.Printf("Provider error: %v\n", err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := prov.Initialize(ctx, profile.Settings); err != nil {
-		fmt.Println("provider init:", err)
+	
+	fmt.Printf("Scanning library for profile '%s' (%s)...\n", profile.Name, profile.Provider)
+	
+	// Force scan by setting scan_on_init in settings
+	var settings any = profile.Settings
+	if settings == nil {
+		settings = map[string]any{"scan_on_init": true}
+	} else if m, ok := settings.(map[string]any); ok {
+		m["scan_on_init"] = true
+		settings = m
+	}
+	
+	ctx := context.Background() // No timeout for scan
+	start := time.Now()
+	if err := prov.Initialize(ctx, settings); err != nil {
+		fmt.Printf("Scan error: %v\n", err)
 		return
 	}
-	ok, details := prov.Health(ctx)
-	fmt.Printf("provider health: %v (%s)\n", ok, details)
-	logger.Info("doctor complete")
+	
+	// Get counts
+	healthy, details := prov.Health(ctx)
+	if !healthy {
+		fmt.Printf("Health check failed: %s\n", details)
+		return
+	}
+	
+	fmt.Printf("Scan complete in %s\n", time.Since(start).Round(time.Millisecond))
+	logger.Info("scan complete", slog.Duration("duration", time.Since(start)))
 }

@@ -112,6 +112,10 @@ func parseConfig(raw map[string]any) (Config, error) {
 		if err != nil {
 			stateDir = os.TempDir()
 		}
+		// Ensure state directory exists
+		if err := os.MkdirAll(stateDir, 0o755); err != nil {
+			return Config{}, fmt.Errorf("create state dir: %w", err)
+		}
 		cfg.IndexDB = filepath.Join(stateDir, "filesystem.sqlite")
 	}
 	for i, r := range cfg.Roots {
@@ -209,7 +213,9 @@ func (p *Provider) scan(ctx context.Context) error {
 			trackID := hash(path)
 			_, _ = insertArtist.ExecContext(ctx, artistID, artistName, strings.ToLower(artistName))
 			_, _ = insertAlbum.ExecContext(ctx, albumID, artistID, albumTitle, 0, "")
-			durationMs := getDurationMs(path)
+			// Skip ffprobe during scan for speed - duration will be 0 initially
+			// TODO: Add background job to populate durations, or get on-demand
+			durationMs := 0
 			format := ""
 			if err == nil {
 				format = fmt.Sprint(meta.Format())

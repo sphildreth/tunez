@@ -67,6 +67,15 @@ func defaultIPCPath() string {
 
 // Start launches mpv (unless disabled) and connects to the IPC socket.
 func (c *Controller) Start(ctx context.Context) error {
+	c.mu.Lock()
+	// Reinitialize done channel if previously closed (for restarts)
+	select {
+	case <-c.done:
+		c.done = make(chan struct{})
+	default:
+	}
+	c.mu.Unlock()
+
 	if c.opts.IPCPath == "" {
 		c.opts.IPCPath = defaultIPCPath()
 	}
@@ -195,13 +204,28 @@ func (c *Controller) SetMute(mute bool) error {
 }
 
 func (c *Controller) Stop() error {
-	close(c.done)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Close done channel only once
+	select {
+	case <-c.done:
+		// already closed
+	default:
+		close(c.done)
+	}
+
 	if c.conn != nil {
-		_ = c.send(map[string]any{"command": []any{"quit"}})
+		// Send quit command (best effort, ignore errors)
+		b, _ := json.Marshal(map[string]any{"command": []any{"quit"}})
+		_, _ = c.conn.Write(append(b, '\n'))
 		_ = c.conn.Close()
+		c.conn = nil
 	}
 	if c.cmd != nil && c.cmd.Process != nil {
 		_ = c.cmd.Process.Kill()
+		_ = c.cmd.Wait() // Reap zombie process
+		c.cmd = nil
 	}
 	return nil
 }
