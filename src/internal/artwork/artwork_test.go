@@ -19,16 +19,16 @@ func TestCacheGetSet(t *testing.T) {
 	}
 
 	// Test miss
-	if _, ok := cache.Get("ref1", 20); ok {
+	if _, ok := cache.Get("ref1", 20, 10, QualityMedium, ScaleFit); ok {
 		t.Error("expected cache miss")
 	}
 
 	// Test set and get
-	if err := cache.Set("ref1", 20, "test ansi art"); err != nil {
+	if err := cache.Set("ref1", 20, 10, QualityMedium, ScaleFit, "test ansi art"); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
 
-	ansi, ok := cache.Get("ref1", 20)
+	ansi, ok := cache.Get("ref1", 20, 10, QualityMedium, ScaleFit)
 	if !ok {
 		t.Error("expected cache hit")
 	}
@@ -37,8 +37,23 @@ func TestCacheGetSet(t *testing.T) {
 	}
 
 	// Different width should be a miss
-	if _, ok := cache.Get("ref1", 10); ok {
+	if _, ok := cache.Get("ref1", 10, 10, QualityMedium, ScaleFit); ok {
 		t.Error("expected cache miss for different width")
+	}
+
+	// Different height should be a miss
+	if _, ok := cache.Get("ref1", 20, 5, QualityMedium, ScaleFit); ok {
+		t.Error("expected cache miss for different height")
+	}
+
+	// Different quality should be a miss
+	if _, ok := cache.Get("ref1", 20, 10, QualityHigh, ScaleFit); ok {
+		t.Error("expected cache miss for different quality")
+	}
+
+	// Different scale mode should be a miss
+	if _, ok := cache.Get("ref1", 20, 10, QualityMedium, ScaleFill); ok {
+		t.Error("expected cache miss for different scale mode")
 	}
 }
 
@@ -49,14 +64,14 @@ func TestCacheClear(t *testing.T) {
 		t.Fatalf("NewCache: %v", err)
 	}
 
-	cache.Set("ref1", 20, "art1")
-	cache.Set("ref2", 20, "art2")
+	cache.Set("ref1", 20, 10, QualityMedium, ScaleFit, "art1")
+	cache.Set("ref2", 20, 10, QualityMedium, ScaleFit, "art2")
 
 	if err := cache.Clear(); err != nil {
 		t.Fatalf("Clear: %v", err)
 	}
 
-	if _, ok := cache.Get("ref1", 20); ok {
+	if _, ok := cache.Get("ref1", 20, 10, QualityMedium, ScaleFit); ok {
 		t.Error("expected cache miss after clear")
 	}
 }
@@ -68,8 +83,8 @@ func TestCacheSize(t *testing.T) {
 		t.Fatalf("NewCache: %v", err)
 	}
 
-	cache.Set("ref1", 20, "short")
-	cache.Set("ref2", 20, strings.Repeat("x", 1000))
+	cache.Set("ref1", 20, 10, QualityMedium, ScaleFit, "short")
+	cache.Set("ref2", 20, 10, QualityMedium, ScaleFit, strings.Repeat("x", 1000))
 
 	size, err := cache.Size()
 	if err != nil {
@@ -109,14 +124,19 @@ func TestConvertToANSI(t *testing.T) {
 		t.Fatalf("read file: %v", err)
 	}
 
-	ansi, err := ConvertToANSI(context.Background(), data, 5, 5)
-	if err != nil {
-		t.Fatalf("ConvertToANSI: %v", err)
-	}
+	// Test with different quality levels
+	for _, quality := range []QualityLevel{QualityLow, QualityMedium, QualityHigh} {
+		for _, scaleMode := range []ScaleMode{ScaleFit, ScaleFill, ScaleStretch} {
+			ansi, err := ConvertToANSI(context.Background(), data, 5, 5, quality, scaleMode)
+			if err != nil {
+				t.Fatalf("ConvertToANSI(%s, %s): %v", quality, scaleMode, err)
+			}
 
-	// Should contain ANSI escape codes
-	if !strings.Contains(ansi, "\x1b[") {
-		t.Error("expected ANSI escape codes in output")
+			// Should contain ANSI escape codes
+			if !strings.Contains(ansi, "\x1b[") {
+				t.Errorf("expected ANSI escape codes in output for quality=%s, scaleMode=%s", quality, scaleMode)
+			}
+		}
 	}
 }
 

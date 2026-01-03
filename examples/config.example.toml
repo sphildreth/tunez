@@ -21,8 +21,17 @@ persist = true                 # Save queue across restarts
 
 [artwork]
 enabled = true                 # Show album artwork in Now Playing
-width = 20                     # Artwork width in characters
+width = 20                     # Artwork width in characters (auto-adjusted if too large)
+height = 10                    # Artwork height in characters
+quality = "medium"             # low, medium, or high (affects sampling/anti-aliasing)
+scale_mode = "fit"             # fit, fill, or stretch (how to scale images)
 cache_days = 30                # Days to cache converted ANSI artwork
+
+# Tips:
+# - For 80-column terminals: width 15-25 works well
+# - For wider terminals: width 30-40 is good
+# - Quality "high" looks best but is slower
+# - Quality "low" is fastest for slow connections
 
 [scrobble]
 enabled = false                # Master switch for all scrobblers

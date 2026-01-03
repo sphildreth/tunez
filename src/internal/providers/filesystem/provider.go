@@ -234,9 +234,17 @@ func parseYearValue(v any) int {
 	case string:
 		s = val
 	case int:
-		return val
+		// Validate integer years
+		if val >= 1900 && val <= 2100 {
+			return val
+		}
+		return 0
 	case int64:
-		return int(val)
+		// Validate int64 years
+		if val >= 1900 && val <= 2100 {
+			return int(val)
+		}
+		return 0
 	default:
 		s = fmt.Sprintf("%v", val)
 	}

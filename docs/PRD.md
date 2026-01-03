@@ -201,7 +201,10 @@ Display album artwork in the TUI.
 
 [x] Add config options
     - artwork.enabled (bool, default: true)
-    - artwork.width (int, default: 20)
+    - artwork.width (int, default: 20) - auto-adjusted for terminal width
+    - artwork.height (int, default: 10)
+    - artwork.quality (string: low|medium|high, default: medium)
+    - artwork.scale_mode (string: fit|fill|stretch, default: fit)
     - artwork.cache_days (int, default: 30)
 
 [x] Add tests

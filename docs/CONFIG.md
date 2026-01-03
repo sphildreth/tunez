@@ -119,8 +119,13 @@ quit = "ctrl+c"
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `enabled` | bool | true | Show artwork in Now Playing |
-| `width` | int | 20 | Artwork width in characters |
+| `width` | int | 20 | Artwork width in characters (auto-adjusted if too large for terminal) |
+| `height` | int | 10 | Artwork height in characters |
+| `quality` | string | "medium" | Image quality: low, medium, or high |
+| `scale_mode` | string | "fit" | Scaling: fit, fill, or stretch |
 | `cache_days` | int | 30 | Days to cache converted artwork |
+
+**Note:** Artwork width is automatically adjusted if it exceeds your terminal width to prevent scrolling. For best results, use values that fit your terminal (e.g., 15-25 width for standard 80-column terminals).
 
 ### `[scrobble]`
 | Key | Type | Default | Description |

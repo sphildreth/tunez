@@ -34,9 +34,12 @@ type QueueConfig struct {
 
 // ArtworkConfig holds artwork display settings.
 type ArtworkConfig struct {
-	Enabled   bool `toml:"enabled"`
-	Width     int  `toml:"width"`
-	CacheDays int  `toml:"cache_days"`
+	Enabled   bool   `toml:"enabled"`
+	Width     int    `toml:"width"`
+	Height    int    `toml:"height"`
+	Quality   string `toml:"quality"`    // low, medium, high
+	ScaleMode string `toml:"scale_mode"` // fit, fill, stretch
+	CacheDays int    `toml:"cache_days"`
 }
 
 // ScrobbleConfig holds global scrobbling settings.
@@ -230,7 +233,16 @@ func applyDefaults(cfg *Config) {
 		cfg.Artwork.Enabled = true
 	}
 	if cfg.Artwork.Width == 0 {
-		cfg.Artwork.Width = 40
+		cfg.Artwork.Width = 20 // Reverted to smaller default
+	}
+	if cfg.Artwork.Height == 0 {
+		cfg.Artwork.Height = 10 // Reverted to smaller default
+	}
+	if cfg.Artwork.Quality == "" {
+		cfg.Artwork.Quality = "medium"
+	}
+	if cfg.Artwork.ScaleMode == "" {
+		cfg.Artwork.ScaleMode = "fit"
 	}
 	if cfg.Artwork.CacheDays == 0 {
 		cfg.Artwork.CacheDays = 30

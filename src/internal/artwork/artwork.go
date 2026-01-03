@@ -101,16 +101,16 @@ func defaultCacheDir() (string, error) {
 }
 
 // cacheKey generates a cache key from artwork reference.
-func cacheKey(ref string, width int) string {
+func cacheKey(ref string, width int, height int, quality QualityLevel, scaleMode ScaleMode) string {
 	h := sha256.New()
 	h.Write([]byte(ref))
-	h.Write([]byte(fmt.Sprintf(":%d", width)))
+	h.Write([]byte(fmt.Sprintf(":%d:%d:%s:%s", width, height, quality, scaleMode)))
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
 // Get retrieves cached ANSI artwork if available and not expired.
-func (c *Cache) Get(ref string, width int) (string, bool) {
-	key := cacheKey(ref, width)
+func (c *Cache) Get(ref string, width int, height int, quality QualityLevel, scaleMode ScaleMode) (string, bool) {
+	key := cacheKey(ref, width, height, quality, scaleMode)
 	path := filepath.Join(c.baseDir, key+".ansi")
 
 	info, err := os.Stat(path)
@@ -133,8 +133,8 @@ func (c *Cache) Get(ref string, width int) (string, bool) {
 }
 
 // Set stores ANSI artwork in the cache.
-func (c *Cache) Set(ref string, width int, ansi string) error {
-	key := cacheKey(ref, width)
+func (c *Cache) Set(ref string, width int, height int, quality QualityLevel, scaleMode ScaleMode, ansi string) error {
+	key := cacheKey(ref, width, height, quality, scaleMode)
 	path := filepath.Join(c.baseDir, key+".ansi")
 	if err := os.WriteFile(path, []byte(ansi), 0o644); err != nil {
 		return err
@@ -256,14 +256,40 @@ func (c *Cache) Size() (int64, error) {
 	return total, nil
 }
 
+// QualityLevel represents artwork quality settings
+type QualityLevel string
+
+const (
+	QualityLow    QualityLevel = "low"
+	QualityMedium QualityLevel = "medium"
+	QualityHigh   QualityLevel = "high"
+)
+
+// ScaleMode represents how to scale images
+type ScaleMode string
+
+const (
+	ScaleFit     ScaleMode = "fit"     // Fit within bounds, preserve aspect ratio
+	ScaleFill    ScaleMode = "fill"    // Fill bounds, preserve aspect ratio (may crop)
+	ScaleStretch ScaleMode = "stretch" // Stretch to fill bounds
+)
+
 // ConvertToANSI converts image data to ANSI art using half-block characters
 // for double vertical resolution and true color for best quality.
-func ConvertToANSI(ctx context.Context, data []byte, width, height int) (string, error) {
+// quality: "low" (nearest neighbor), "medium" (bilinear), "high" (bicubic + anti-aliasing)
+// scaleMode: "fit", "fill", or "stretch"
+func ConvertToANSI(ctx context.Context, data []byte, width, height int, quality QualityLevel, scaleMode ScaleMode) (string, error) {
 	if width <= 0 {
-		width = 40
+		width = 20
 	}
 	if height <= 0 {
-		height = 20
+		height = 10
+	}
+	if quality == "" {
+		quality = QualityMedium
+	}
+	if scaleMode == "" {
+		scaleMode = ScaleFit
 	}
 
 	// Decode image
@@ -281,50 +307,117 @@ func ConvertToANSI(ctx context.Context, data []byte, width, height int) (string,
 		return "", ErrInvalid
 	}
 
-	// Calculate dimensions preserving aspect ratio
-	// Each character cell displays 2 vertical pixels using half-blocks
+	// Calculate target dimensions based on scale mode
 	aspectRatio := float64(imgWidth) / float64(imgHeight)
-	charWidth := width
-	charHeight := int(float64(width) / aspectRatio)
+	targetWidth := width
+	targetHeight := height
 
-	// charHeight is in "half rows" (2 pixels per char), so actual terminal rows = charHeight/2
-	terminalRows := (charHeight + 1) / 2
-	if terminalRows > height {
-		terminalRows = height
-		charHeight = terminalRows * 2
-		charWidth = int(float64(charHeight) * aspectRatio)
+	switch scaleMode {
+	case ScaleStretch:
+		// Use exact dimensions
+	case ScaleFill:
+		// Fill the area, may crop
+		if float64(width)/float64(height) > aspectRatio {
+			// Target is wider than image, scale to height
+			targetWidth = int(float64(height) * aspectRatio)
+		} else {
+			// Target is taller than image, scale to width
+			targetHeight = int(float64(width) / aspectRatio)
+		}
+	case ScaleFit:
+		fallthrough
+	default:
+		// Fit within bounds, preserve aspect ratio
+		if float64(width)/float64(height) > aspectRatio {
+			// Target is wider than image, scale to width
+			targetHeight = int(float64(width) / aspectRatio)
+		} else {
+			// Target is taller than image, scale to height
+			targetWidth = int(float64(height) * aspectRatio)
+		}
+	}
+
+	// Ensure minimum dimensions
+	if targetWidth < 1 {
+		targetWidth = 1
+	}
+	if targetHeight < 1 {
+		targetHeight = 1
+	}
+
+	// Calculate sampling density based on quality
+	samplesPerPixel := 1
+	if quality == QualityHigh {
+		samplesPerPixel = 4 // 2x2 sampling for anti-aliasing
+	} else if quality == QualityMedium {
+		samplesPerPixel = 2 // 1x2 sampling
 	}
 
 	// Use half-block rendering: each character shows top and bottom pixel
 	// ▀ = upper half block (fg = top pixel, bg = bottom pixel)
 	var result strings.Builder
-	for row := 0; row < terminalRows; row++ {
-		for x := 0; x < charWidth; x++ {
-			// Sample top pixel (row * 2)
-			topY := (row * 2 * imgHeight) / charHeight
-			// Sample bottom pixel (row * 2 + 1)
-			bottomY := ((row*2 + 1) * imgHeight) / charHeight
-			sampleX := (x * imgWidth) / charWidth
+	for row := 0; row < targetHeight; row++ {
+		for x := 0; x < targetWidth; x++ {
+			// Calculate sample positions with anti-aliasing
+			var topR, topG, topB, topA uint32
+			var bottomR, bottomG, bottomB, bottomA uint32
+			sampleCount := 0
 
-			if sampleX >= imgWidth {
-				sampleX = imgWidth - 1
-			}
-			if topY >= imgHeight {
-				topY = imgHeight - 1
-			}
-			if bottomY >= imgHeight {
-				bottomY = imgHeight - 1
+			// Multi-sample for anti-aliasing
+			for sy := 0; sy < samplesPerPixel; sy++ {
+				for sx := 0; sx < samplesPerPixel; sx++ {
+					// Sample top pixel (row * 2 + offset)
+					topY := (row*2*samplesPerPixel + sy) * imgHeight / (targetHeight * 2 * samplesPerPixel)
+					// Sample bottom pixel (row * 2 + 1 + offset)
+					bottomY := ((row*2+1)*samplesPerPixel + sy) * imgHeight / (targetHeight * 2 * samplesPerPixel)
+					sampleX := (x*samplesPerPixel + sx) * imgWidth / (targetWidth * samplesPerPixel)
+
+					// Clamp to bounds
+					if sampleX >= imgWidth {
+						sampleX = imgWidth - 1
+					}
+					if topY >= imgHeight {
+						topY = imgHeight - 1
+					}
+					if bottomY >= imgHeight {
+						bottomY = imgHeight - 1
+					}
+
+					// Get top pixel color
+					tr, tg, tb, ta := img.At(bounds.Min.X+sampleX, bounds.Min.Y+topY).RGBA()
+					topR += tr
+					topG += tg
+					topB += tb
+					topA += ta
+
+					// Get bottom pixel color
+					br, bg, bb, ba := img.At(bounds.Min.X+sampleX, bounds.Min.Y+bottomY).RGBA()
+					bottomR += br
+					bottomG += bg
+					bottomB += bb
+					bottomA += ba
+
+					sampleCount++
+				}
 			}
 
-			// Get top pixel color
-			tr, tg, tb, ta := img.At(bounds.Min.X+sampleX, bounds.Min.Y+topY).RGBA()
-			tr8, tg8, tb8 := uint8(tr>>8), uint8(tg>>8), uint8(tb>>8)
-			ta8 := uint8(ta >> 8)
+			// Average the samples
+			if sampleCount > 0 {
+				topR /= uint32(sampleCount)
+				topG /= uint32(sampleCount)
+				topB /= uint32(sampleCount)
+				topA /= uint32(sampleCount)
+				bottomR /= uint32(sampleCount)
+				bottomG /= uint32(sampleCount)
+				bottomB /= uint32(sampleCount)
+				bottomA /= uint32(sampleCount)
+			}
 
-			// Get bottom pixel color
-			br, bg, bb, ba := img.At(bounds.Min.X+sampleX, bounds.Min.Y+bottomY).RGBA()
-			br8, bg8, bb8 := uint8(br>>8), uint8(bg>>8), uint8(bb>>8)
-			ba8 := uint8(ba >> 8)
+			// Convert to 8-bit
+			tr8, tg8, tb8 := uint8(topR>>8), uint8(topG>>8), uint8(topB>>8)
+			ta8 := uint8(topA >> 8)
+			br8, bg8, bb8 := uint8(bottomR>>8), uint8(bottomG>>8), uint8(bottomB>>8)
+			ba8 := uint8(bottomA >> 8)
 
 			// Handle transparency
 			topTransparent := ta8 < 128
@@ -344,7 +437,7 @@ func ConvertToANSI(ctx context.Context, data []byte, width, height int) (string,
 					tr8, tg8, tb8, br8, bg8, bb8))
 			}
 		}
-		if row < terminalRows-1 {
+		if row < targetHeight-1 {
 			result.WriteString("\n")
 		}
 	}
@@ -423,8 +516,8 @@ func DefaultArtwork(width, height int) string {
 	}
 	defaultArtworkCacheMu.Unlock()
 
-	// Convert embedded PNG to ANSI
-	result, err := ConvertToANSI(context.Background(), defaultArtworkPNG, width, height)
+	// Convert embedded PNG to ANSI (use medium quality, fit mode)
+	result, err := ConvertToANSI(context.Background(), defaultArtworkPNG, width, height, QualityMedium, ScaleFit)
 	if err != nil {
 		// Fallback to text placeholder if conversion fails
 		return Placeholder(width, height)

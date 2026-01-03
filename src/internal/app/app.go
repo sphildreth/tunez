@@ -453,33 +453,63 @@ func (m Model) fetchArtworkCmd(trackID, artworkRef string) tea.Cmd {
 		if width <= 0 {
 			width = 20
 		}
-		height := width / 2 // Maintain aspect ratio for terminal
+		height := m.cfg.Artwork.Height
+		if height <= 0 {
+			height = 10
+		}
+
+		// Ensure artwork doesn't exceed available width
+		availableWidth := m.width - 20
+		if availableWidth > 0 && width > availableWidth {
+			width = availableWidth
+			if m.cfg.Artwork.Height == 0 {
+				height = width / 2
+			}
+		}
+
+		// Parse quality and scale mode
+		quality := artwork.QualityMedium
+		if m.cfg.Artwork.Quality != "" {
+			quality = artwork.QualityLevel(m.cfg.Artwork.Quality)
+		}
+		scaleMode := artwork.ScaleFit
+		if m.cfg.Artwork.ScaleMode != "" {
+			scaleMode = artwork.ScaleMode(m.cfg.Artwork.ScaleMode)
+		}
 
 		// Check cache first
 		if m.artworkCache != nil {
-			if cached, ok := m.artworkCache.Get(artworkRef, width); ok {
+			if cached, ok := m.artworkCache.Get(artworkRef, width, height, quality, scaleMode); ok {
 				return artworkMsg{trackID: trackID, ansi: cached}
 			}
 		}
 
 		// Fetch artwork from provider
+		// Request larger image for higher quality conversion
+		requestSize := width * 10
+		if quality == artwork.QualityHigh {
+			requestSize = width * 20
+		} else if quality == artwork.QualityLow {
+			requestSize = width * 5
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 
-		art, err := m.provider.GetArtwork(ctx, artworkRef, width*10) // Request larger for quality
+		art, err := m.provider.GetArtwork(ctx, artworkRef, requestSize)
 		if err != nil {
 			return artworkMsg{trackID: trackID, err: err}
 		}
 
 		// Convert to ANSI
-		ansi, err := artwork.ConvertToANSI(ctx, art.Data, width, height)
+		ansi, err := artwork.ConvertToANSI(ctx, art.Data, width, height, quality, scaleMode)
 		if err != nil {
 			return artworkMsg{trackID: trackID, err: err}
 		}
 
 		// Cache result
 		if m.artworkCache != nil {
-			_ = m.artworkCache.Set(artworkRef, width, ansi)
+			_ = m.artworkCache.Set(artworkRef, width, height, quality, scaleMode, ansi)
 		}
 
 		return artworkMsg{trackID: trackID, ansi: ansi}
@@ -1918,12 +1948,31 @@ func (m Model) renderNowPlaying() string {
 			if artWidth <= 0 {
 				artWidth = 20
 			}
+			artHeight := m.cfg.Artwork.Height
+			if artHeight <= 0 {
+				artHeight = 10
+			}
+
+			// Ensure artwork doesn't exceed available width (leave some margin)
+			// Main content width is roughly: totalWidth - navWidth - borders - padding
+			availableWidth := m.width - 20 // Conservative estimate for borders/padding
+			if availableWidth > 0 && artWidth > availableWidth {
+				artWidth = availableWidth
+				// Recalculate height to maintain aspect ratio
+				if m.cfg.Artwork.Height > 0 {
+					// If user explicitly set height, preserve it
+					artHeight = m.cfg.Artwork.Height
+				} else {
+					artHeight = artWidth / 2
+				}
+			}
+
 			var artworkDisplay string
 			if m.artworkANSI != "" {
 				artworkDisplay = m.artworkANSI
 			} else {
 				// Use default artwork (tunez logo) when loading or no artwork available
-				artworkDisplay = artwork.DefaultArtwork(artWidth, artWidth/2)
+				artworkDisplay = artwork.DefaultArtwork(artWidth, artHeight)
 			}
 
 			// Join artwork and track info horizontally
