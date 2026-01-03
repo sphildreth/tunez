@@ -131,16 +131,21 @@ On Linux this is typically:
 
 ## Docs (source of truth)
 
-Start here:
-- `docs/PRD.md` — product requirements and acceptance criteria
-- `docs/TECH_DESIGN.md` — architecture + key technical decisions
-- `docs/TUI_UX.md` — screens, interactions, and keybindings
-- `docs/PROVIDERS.md` — provider interface contract
-- `docs/PROVIDER_FILESYSTEM.md` — filesystem provider spec
+**Start here:**
+- **`docs/PHASE_PLAN.md`** — **Comprehensive phase breakdown mapping ALL requirements to deliverable phases**
+
+**Full documentation:**
+- `docs/README.md` — Documentation navigation and quick reference
+- `docs/PRD.md` — Product requirements and acceptance criteria
+- `docs/TUI_UX.md` — Screens, interactions, and keybindings
+- `docs/TECH_DESIGN.md` — Architecture + key technical decisions
+- `docs/PROVIDERS.md` — Provider interface contract
+- `docs/CONFIG.md` — Config schema + profiles + keybindings
+- `docs/TEST_STRATEGY.md` — Testing approach
+- `docs/SECURITY_PRIVACY.md` — Handling secrets, auth, privacy expectations
+- `docs/PROVIDER_FILESYSTEM.md` — Filesystem provider spec
 - `docs/PROVIDER_MELODEE_API.md` — Melodee API provider spec
-- `docs/CONFIG.md` — config schema + profiles + keybindings
-- `docs/SECURITY_PRIVACY.md` — handling secrets, auth, privacy expectations
-- `docs/TEST_STRATEGY.md` — testing approach
+- `docs/DECISIONS.md` — Architectural trade-offs and clarifications
 
 ## Contributing (developer workflow)
 
