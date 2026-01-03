@@ -2,6 +2,13 @@
   <img src="graphics/tunez-logo.png" alt="Tunez Logo" width="120" />
 </p>
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go" alt="Go Version" />
+  <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20macOS-lightgrey?style=flat" alt="Platform" />
+  <img src="https://img.shields.io/badge/License-MIT-green?style=flat" alt="License" />
+  <img src="https://img.shields.io/badge/Status-Active%20Development-blue?style=flat" alt="Status" />
+</p>
+
 <h1 align="center">Tunez</h1>
 
 <p align="center">
@@ -16,14 +23,6 @@
   <a href="#configuration">Configuration</a> •
   <a href="#contributing">Contributing</a>
 </p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go" alt="Go Version" />
-  <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20macOS-lightgrey?style=flat" alt="Platform" />
-  <img src="https://img.shields.io/badge/License-MIT-green?style=flat" alt="License" />
-  <img src="https://img.shields.io/badge/Status-Active%20Development-blue?style=flat" alt="Status" />
-</p>
-
 ---
 
 Tunez is a **keyboard-driven terminal music player** written in Go. It features a responsive [Bubble Tea](https://github.com/charmbracelet/bubbletea) TUI, [mpv](https://mpv.io/) for high-quality audio playback, and support for multiple music sources through a flexible provider system.
