@@ -17,10 +17,10 @@ Use these checkboxes to track implementation status.
 Tunez is a terminal-first music player. It provides a rich, keyboard-driven TUI for browsing and searching a music library and controlling playback. Tunez supports multiple “Providers” (music sources) compiled into the binary.
 
 **Phase 1 includes two built-in Providers:**
-- **Filesystem Provider**: local directories (tags-based library + folder fallback)
+- **Filesystem Provider**: local directories (tags-based library for metadata; folder fallback for untagged files)
 - **Melodee API Provider**: remote server providing library/search/streaming via HTTPS
 
-Tunez uses **mpv** as the playback engine. Tunez controls mpv via **JSON IPC** so playback is robust, performant, and consistent across platforms.
+Tunez uses **mpv** as the playback engine. Tunez controls mpv via **JSON IPC** (Unix sockets on Linux/macOS, Named Pipes on Windows) so playback is robust, performant, and consistent across platforms.
 
 ## 2. Goals and Non-goals
 
@@ -66,8 +66,8 @@ Tunez uses **mpv** as the playback engine. Tunez controls mpv via **JSON IPC** s
 - Provider errors MUST be normalized (NotSupported, NotFound, Unauthorized, Offline, RateLimited, Temporary, etc.).
 
 **MUST (Phase 1 built-ins)**
-- Filesystem Provider (see `docs/PROVIDER_FILESYSTEM.md`)
-- Melodee API Provider (see `docs/PROVIDER_MELODEE_API.md`)
+- Filesystem Provider (see `docs/PROVIDER_FILESYSTEM.md`): MUST persist index (e.g. SQLite) to disk for fast startup.
+- Melodee API Provider (see `docs/PROVIDER_MELODEE_API.md`): SHOULD utilize a mock/staging env for development.
 
 ### 4.2 Library browsing
 Tunez MUST provide these browse views (capability-gated where appropriate):
@@ -123,6 +123,7 @@ Tunez MUST provide:
 - Help / keybindings overlay
 - Error toast + error modal
 - CLI “play then launch TUI” flow (optional for MVP; planned)
+- `tunez version` CLI command
 
 See `docs/TUI_UX.md` for the full screen specification.
 
@@ -132,13 +133,14 @@ See `docs/TUI_UX.md` for the full screen specification.
 - Config file on disk (`config.toml`) with:
   - one or more Provider profiles
   - keybindings
-  - playback settings (mpv path, cache settings, initial volume)
+  - playback settings (mpv path, cache settings, initial volume). Tunez expects `mpv` to be installed by the user; if not found in `$PATH` or config, it MUST fail fast with a helpful error.
   - UI settings (theme, page sizes)
 - Tunez MUST validate config on startup and show actionable errors without leaking secrets.
-- Tunez MUST support selecting an active profile at runtime (menu).
+- Tunez MUST support selecting an active profile at runtime (menu). Switching profiles MUST stop playback and clear the queue to ensure clean state.
 
 **MUST (UX theme)**
 - The default UI theme MUST be intentionally very colorful, with rainbow-like ANSI effects (high-saturation accents across the UI).
+- Tunez MUST respect the `NO_COLOR` environment variable or provide a high-contrast fallback for accessibility.
 - Tunez MUST support additional themes later (v1+), including at least monochromatic and “green terminal” styles.
 - Theme selection MUST be configurable (e.g., `ui.theme`), with the colorful theme as the default when unset.
 
