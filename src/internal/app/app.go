@@ -89,14 +89,14 @@ func (f searchFilter) String() string {
 	}
 }
 
-func New(cfg *config.Config, prov provider.Provider, factory ProviderFactory, player *player.Controller, settings any) Model {
+func New(cfg *config.Config, prov provider.Provider, factory ProviderFactory, player *player.Controller, settings any, theme ui.Theme) Model {
 	return Model{
 		cfg:             cfg,
 		provider:        prov,
 		factory:         factory,
 		player:          player,
 		queue:           queue.New(),
-		theme:           ui.Rainbow(cfg.UI.NoEmoji),
+		theme:           theme,
 		screen:          screenLoading,
 		status:          "Loading…",
 		profileSettings: settings,
@@ -288,6 +288,19 @@ func (m Model) addNextTrackCmd(track provider.Track) tea.Cmd {
 	}
 }
 
+type seekMsg struct {
+	err error
+}
+
+func (m Model) seekCmd(delta float64) tea.Cmd {
+	return func() tea.Msg {
+		if err := m.player.Seek(delta); err != nil {
+			return seekMsg{err: err}
+		}
+		return seekMsg{}
+	}
+}
+
 func (m Model) selectedTrack() (provider.Track, bool) {
 	if m.screen == screenLibrary && len(m.tracks) > 0 {
 		idx := clamp(m.selection, 0, len(m.tracks)-1)
@@ -302,6 +315,11 @@ func (m Model) selectedTrack() (provider.Track, bool) {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case seekMsg:
+		if msg.err != nil {
+			return m.setError(msg.err)
+		}
+		return m, nil
 	case addTrackMsg:
 		m.queue.Add(msg.track)
 		m.status = "Added to queue: " + msg.track.Title
@@ -354,15 +372,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.queue.CycleRepeat()
 			return m, nil
 		case "H":
-			if err := m.player.Seek(float64(-m.cfg.Player.SeekLarge)); err != nil {
-				return m.setError(err)
-			}
-			return m, nil
+			return m, m.seekCmd(float64(-m.cfg.Player.SeekLarge))
 		case "L":
-			if err := m.player.Seek(float64(m.cfg.Player.SeekLarge)); err != nil {
-				return m.setError(err)
-			}
-			return m, nil
+			return m, m.seekCmd(float64(m.cfg.Player.SeekLarge))
 		case "a":
 			if t, ok := m.selectedTrack(); ok {
 				return m, m.addTrackCmd(t)
@@ -371,8 +383,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if t, ok := m.selectedTrack(); ok {
 				return m, m.addNextTrackCmd(t)
 			}
+		case "P":
+			if t, ok := m.selectedTrack(); ok {
+				return m, m.addNextTrackCmd(t)
+			}
 		case "tab":
-			m.screen = (m.screen + 1) % 7
+			m.screen = (m.screen + 1) % 8
 			if m.screen == screenLoading {
 				m.screen++
 			}
@@ -383,6 +399,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.screen == screenLyrics && !m.provider.Capabilities()[provider.CapLyrics] {
 				m.screen++
 			}
+			m.selection = 0
 			if m.screen == screenPlaylists && len(m.playlists) == 0 {
 				return m, m.loadPlaylistsCmd("")
 			}
@@ -452,16 +469,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			// Seeking for other screens
-			if err := m.player.Seek(float64(-m.cfg.Player.SeekSmall)); err != nil {
-				return m.setError(err)
-			}
+			return m, m.seekCmd(float64(-m.cfg.Player.SeekSmall))
 		case "l", "right":
 			if m.screen == screenLibrary {
 				return m.handleEnter()
 			}
-			if err := m.player.Seek(float64(m.cfg.Player.SeekSmall)); err != nil {
-				return m.setError(err)
-			}
+			return m, m.seekCmd(float64(m.cfg.Player.SeekSmall))
 		case "/":
 			m.screen = screenSearch
 			m.searchQ = ""
@@ -484,7 +497,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return nil
 			})
-		case "d":
+		case "x":
 			if m.screen == screenQueue {
 				if err := m.queue.Remove(m.selection); err == nil {
 					if m.selection >= m.queue.Len() {
@@ -493,6 +506,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if m.selection < 0 {
 						m.selection = 0
 					}
+				}
+				return m, nil
+			}
+		case "d":
+			if m.screen == screenQueue {
+				if m.selection < m.queue.Len()-1 {
+					_ = m.queue.Move(m.selection, m.selection+1)
+					m.selection++
+				}
+				return m, nil
+			}
+		case "u":
+			if m.screen == screenQueue {
+				if m.selection > 0 {
+					_ = m.queue.Move(m.selection, m.selection-1)
+					m.selection--
 				}
 				return m, nil
 			}
@@ -518,6 +547,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selection = 0
 				return m, nil
 			}
+		case "C":
+			if m.screen == screenQueue {
+				m.queue.Clear()
+				m.selection = 0
+				return m, nil
+			}
 		case "n":
 			if t, err := m.queue.Next(); err == nil {
 				return m, m.playTrackCmd(t)
@@ -529,14 +564,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "-":
 			m.volume -= float64(m.cfg.Player.VolumeStep)
+			if m.volume < 0 {
+				m.volume = 0
+			}
 			return m, func() tea.Msg {
 				if err := m.player.SetVolume(m.volume); err != nil {
 					return playerMsg{Err: err}
 				}
 				return nil
 			}
-		case "+":
+		case "+", "=":
 			m.volume += float64(m.cfg.Player.VolumeStep)
+			if m.volume > 100 {
+				m.volume = 100
+			}
 			return m, func() tea.Msg {
 				if err := m.player.SetVolume(m.volume); err != nil {
 					return playerMsg{Err: err}
@@ -717,8 +758,12 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 			}
 		}
 	case screenQueue:
-		if t, err := m.queue.Current(); err == nil {
-			return m, m.playTrackCmd(t)
+		if m.queue.Len() > 0 {
+			if err := m.queue.SetCurrent(m.selection); err == nil {
+				if t, err := m.queue.Current(); err == nil {
+					return m, m.playTrackCmd(t)
+				}
+			}
 		}
 	case screenConfig:
 		if len(m.cfg.Profiles) > 0 {
@@ -767,6 +812,10 @@ func (m Model) View() string {
 		main = m.renderSearch()
 	case screenQueue:
 		main = m.renderQueue()
+	case screenPlaylists:
+		main = m.renderPlaylists()
+	case screenLyrics:
+		main = m.renderLyrics()
 	case screenConfig:
 		main = m.renderConfig()
 	}
@@ -958,7 +1007,7 @@ func (m Model) renderConfig() string {
 	var b strings.Builder
 	b.WriteString(m.theme.Title.Render("Config") + "\n\n")
 
-	b.WriteString(m.theme.Title.Render("Profiles") + "\n")
+	b.WriteString(m.theme.Accent.Render("Profiles") + "\n")
 	for i, p := range m.cfg.Profiles {
 		prefix := "  "
 		if i == m.selection {
@@ -975,8 +1024,35 @@ func (m Model) renderConfig() string {
 		b.WriteString(m.theme.Text.Render(line) + "\n")
 	}
 	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("Theme: %s\n", m.cfg.UI.Theme))
-	b.WriteString(fmt.Sprintf("MPV path: %s\n", m.cfg.Player.MPVPath))
+
+	// Provider capabilities
+	b.WriteString(m.theme.Accent.Render("Provider Capabilities") + "\n")
+	caps := m.provider.Capabilities()
+	capList := []string{}
+	if caps[provider.CapPlaylists] {
+		capList = append(capList, "Playlists")
+	}
+	if caps[provider.CapLyrics] {
+		capList = append(capList, "Lyrics")
+	}
+	if caps[provider.CapArtwork] {
+		capList = append(capList, "Artwork")
+	}
+	if len(capList) == 0 {
+		b.WriteString(m.theme.Dim.Render("  (none)") + "\n")
+	} else {
+		b.WriteString(m.theme.Text.Render("  "+strings.Join(capList, ", ")) + "\n")
+	}
+	b.WriteString("\n")
+
+	// Settings
+	b.WriteString(m.theme.Accent.Render("Settings") + "\n")
+	b.WriteString(fmt.Sprintf("  Theme: %s\n", m.cfg.UI.Theme))
+	b.WriteString(fmt.Sprintf("  MPV path: %s\n", m.cfg.Player.MPVPath))
+	b.WriteString(fmt.Sprintf("  Seek small: %ds\n", m.cfg.Player.SeekSmall))
+	b.WriteString(fmt.Sprintf("  Seek large: %ds\n", m.cfg.Player.SeekLarge))
+	b.WriteString(fmt.Sprintf("  Volume step: %d%%\n", m.cfg.Player.VolumeStep))
+
 	return b.String()
 }
 
@@ -993,7 +1069,11 @@ func (m Model) renderHelp() string {
 		"  space         : Play/Pause",
 		"  n / p         : Next / Previous track",
 		"  h / l         : Seek -5s / +5s",
+		"  H / L         : Seek -30s / +30s",
 		"  - / +         : Volume Down / Up",
+		"  m             : Mute",
+		"  s             : Toggle Shuffle",
+		"  r             : Cycle Repeat (off/all/one)",
 		"",
 		m.theme.Accent.Render("Navigation"),
 		"  j / k         : Move selection down / up",
@@ -1005,9 +1085,14 @@ func (m Model) renderHelp() string {
 		"  f             : Cycle filter (Tracks/Albums/Artists)",
 		"",
 		m.theme.Accent.Render("Queue"),
-		"  d             : Remove item",
-		"  J / K         : Move item down / up",
-		"  c             : Clear queue",
+		"  x             : Remove item",
+		"  u / d         : Move item up / down",
+		"  C             : Clear queue",
+		"  P             : Play next (add after current)",
+		"",
+		m.theme.Accent.Render("Library"),
+		"  a             : Add to queue",
+		"  A             : Add to queue (play next)",
 	}
 	return strings.Join(lines, "\n")
 }
@@ -1058,6 +1143,10 @@ func (m Model) screenTitle() string {
 		return "Search"
 	case screenQueue:
 		return "Queue"
+	case screenPlaylists:
+		return "Playlists"
+	case screenLyrics:
+		return "Lyrics"
 	case screenConfig:
 		return "Config"
 	default:

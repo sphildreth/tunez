@@ -17,6 +17,7 @@ import (
 	"github.com/tunez/tunez/internal/provider"
 	"github.com/tunez/tunez/internal/providers/filesystem"
 	"github.com/tunez/tunez/internal/providers/melodee"
+	"github.com/tunez/tunez/internal/ui"
 )
 
 var version = "0.1.0"
@@ -54,7 +55,7 @@ func main() {
 		logger.Error("provider init", slog.Any("err", err))
 		log.Fatalf("init provider: %v", err)
 	}
-	
+
 	ctrl := player.New(player.Options{
 		MPVPath: cfg.Player.MPVPath,
 		Logger:  logger,
@@ -63,9 +64,14 @@ func main() {
 		logger.Error("start player", slog.Any("err", err))
 		log.Fatalf("start player: %v", err)
 	}
+
+	// NO_COLOR env var support per accessibility spec
+	noColor := os.Getenv("NO_COLOR") != "" || cfg.UI.NoEmoji
+	theme := ui.Rainbow(noColor)
+
 	model := app.New(cfg, prov, func(p config.Profile) (provider.Provider, error) {
 		return buildProvider(p)
-	}, ctrl, profile.Settings)
+	}, ctrl, profile.Settings, theme)
 	if _, err := tea.NewProgram(model, tea.WithAltScreen()).Run(); err != nil {
 		logger.Error("run tui", slog.Any("err", err))
 		log.Fatalf("tui: %v", err)

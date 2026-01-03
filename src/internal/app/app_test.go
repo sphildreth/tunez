@@ -8,6 +8,7 @@ import (
 	"github.com/tunez/tunez/internal/config"
 	"github.com/tunez/tunez/internal/player"
 	"github.com/tunez/tunez/internal/provider"
+	"github.com/tunez/tunez/internal/ui"
 )
 
 type mockProvider struct {
@@ -75,10 +76,11 @@ func TestNavigation(t *testing.T) {
 	}
 	// Mock player that doesn't start process
 	pl := player.New(player.Options{DisableProcess: true})
+	theme := ui.Rainbow(false)
 
 	m := New(cfg, prov, func(p config.Profile) (provider.Provider, error) {
 		return prov, nil
-	}, pl, nil)
+	}, pl, nil, theme)
 
 	// 1. Initial State
 	if m.screen != screenLoading {

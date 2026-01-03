@@ -3,7 +3,6 @@ package queue
 import (
 	"errors"
 	"math/rand"
-	"time"
 
 	"github.com/tunez/tunez/internal/provider"
 )
@@ -114,21 +113,17 @@ func (q *Queue) ToggleShuffle() {
 		// Save original order
 		q.original = make([]provider.Track, len(q.items))
 		copy(q.original, q.items)
-		
-		// Shuffle items, but keep current playing item at current index if possible
-		// Actually, usually we shuffle everything except current?
-		// Or just shuffle everything.
-		// If we shuffle, current index points to a different track unless we find it.
+
 		currentTrack := provider.Track{}
 		if q.current >= 0 && q.current < len(q.items) {
 			currentTrack = q.items[q.current]
 		}
-		
-		rand.Seed(time.Now().UnixNano())
+
+		// Go 1.20+ auto-seeds; no need for rand.Seed
 		rand.Shuffle(len(q.items), func(i, j int) {
 			q.items[i], q.items[j] = q.items[j], q.items[i]
 		})
-		
+
 		// Find current track and update index
 		if currentTrack.ID != "" {
 			for i, t := range q.items {
@@ -146,10 +141,10 @@ func (q *Queue) ToggleShuffle() {
 			if q.current >= 0 && q.current < len(q.items) {
 				currentTrack = q.items[q.current]
 			}
-			
+
 			q.items = q.original
 			q.original = nil
-			
+
 			if currentTrack.ID != "" {
 				for i, t := range q.items {
 					if t.ID == currentTrack.ID {
@@ -179,14 +174,14 @@ func (q *Queue) Next() (provider.Track, error) {
 	if len(q.items) == 0 {
 		return provider.Track{}, ErrEmpty
 	}
-	
+
 	if q.repeatMode == RepeatOne {
 		if q.current == -1 {
 			q.current = 0
 		}
 		return q.items[q.current], nil
 	}
-	
+
 	if q.current < len(q.items)-1 {
 		q.current++
 	} else if q.repeatMode == RepeatAll {

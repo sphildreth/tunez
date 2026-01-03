@@ -80,3 +80,80 @@ func TestQueueMove(t *testing.T) {
 		t.Fatalf("expected current t0 got %s", cur.ID)
 	}
 }
+
+func TestQueueShuffle(t *testing.T) {
+	q := New()
+	q.Add(sampleTracks(5)...)
+	if q.IsShuffled() {
+		t.Fatal("queue should not be shuffled initially")
+	}
+	q.ToggleShuffle()
+	if !q.IsShuffled() {
+		t.Fatal("queue should be shuffled after toggle")
+	}
+	// Current track should still be accessible
+	cur, err := q.Current()
+	if err != nil {
+		t.Fatalf("current err after shuffle: %v", err)
+	}
+	if cur.ID == "" {
+		t.Fatal("current track should not be empty")
+	}
+	// Toggle back
+	q.ToggleShuffle()
+	if q.IsShuffled() {
+		t.Fatal("queue should not be shuffled after second toggle")
+	}
+}
+
+func TestQueueRepeat(t *testing.T) {
+	q := New()
+	q.Add(sampleTracks(2)...)
+	if q.RepeatMode() != RepeatOff {
+		t.Fatalf("expected RepeatOff, got %d", q.RepeatMode())
+	}
+	q.CycleRepeat()
+	if q.RepeatMode() != RepeatAll {
+		t.Fatalf("expected RepeatAll, got %d", q.RepeatMode())
+	}
+	q.CycleRepeat()
+	if q.RepeatMode() != RepeatOne {
+		t.Fatalf("expected RepeatOne, got %d", q.RepeatMode())
+	}
+	q.CycleRepeat()
+	if q.RepeatMode() != RepeatOff {
+		t.Fatalf("expected RepeatOff after cycling, got %d", q.RepeatMode())
+	}
+}
+
+func TestQueueRepeatAll(t *testing.T) {
+	q := New()
+	q.Add(sampleTracks(2)...)
+	q.CycleRepeat() // RepeatAll
+	// Go to end
+	q.Next()
+	// Next should wrap to beginning
+	track, err := q.Next()
+	if err != nil {
+		t.Fatalf("next with repeat all err: %v", err)
+	}
+	if track.ID != "t0" {
+		t.Fatalf("expected wrap to t0, got %s", track.ID)
+	}
+}
+
+func TestQueueRepeatOne(t *testing.T) {
+	q := New()
+	q.Add(sampleTracks(2)...)
+	q.CycleRepeat() // RepeatAll
+	q.CycleRepeat() // RepeatOne
+	// Next should return same track
+	track1, _ := q.Current()
+	track2, err := q.Next()
+	if err != nil {
+		t.Fatalf("next with repeat one err: %v", err)
+	}
+	if track1.ID != track2.ID {
+		t.Fatalf("expected same track in repeat one, got %s vs %s", track1.ID, track2.ID)
+	}
+}

@@ -1,154 +1,278 @@
-# Tunez
+<p align="center">
+  <img src="graphics/tunez-logo.png" alt="Tunez Logo" width="120" />
+</p>
 
-Tunez is a fast, responsive terminal music player written in Go with a Bubble Tea UI and `mpv` playback.
+<h1 align="center">Tunez</h1>
 
-## Status
-Tunez is in active development. Expect rough edges and breaking changes while MVP is being built.
+<p align="center">
+  <strong>A fast, beautiful terminal music player</strong>
+</p>
 
-## Key features (MVP)
-- Browse/search music via built-in providers (Filesystem + Melodee API).
-- Enqueue and play tracks with non-blocking UI.
-- Playback through `mpv` (started and controlled by Tunez).
-- Configurable profiles + keybindings.
+<p align="center">
+  <a href="#features">Features</a> •
+  <a href="#installation">Installation</a> •
+  <a href="#quickstart">Quickstart</a> •
+  <a href="#keybindings">Keybindings</a> •
+  <a href="#configuration">Configuration</a> •
+  <a href="#contributing">Contributing</a>
+</p>
 
-## Repository layout
-This repository has two top-level concerns:
+<p align="center">
+  <img src="https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go" alt="Go Version" />
+  <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20macOS-lightgrey?style=flat" alt="Platform" />
+  <img src="https://img.shields.io/badge/License-MIT-green?style=flat" alt="License" />
+  <img src="https://img.shields.io/badge/Status-Active%20Development-blue?style=flat" alt="Status" />
+</p>
 
-- `docs/` — product + technical specs (requirements, UX, provider contract)
-- `src/` — Go module (`go.mod`) and application source
+---
 
-The Tunez entrypoint is `src/cmd/tunez`.
+Tunez is a **keyboard-driven terminal music player** written in Go. It features a responsive [Bubble Tea](https://github.com/charmbracelet/bubbletea) TUI, [mpv](https://mpv.io/) for high-quality audio playback, and support for multiple music sources through a flexible provider system.
 
-## Prerequisites
+## Features
 
-### Required
-- **Go 1.22+** (see `src/go.mod`)
-- **mpv** installed and available on `PATH` (or configure `player.mpv_path`)
+- 🎵 **Beautiful TUI** — Rainbow-colored interface with smooth navigation
+- ⚡ **Responsive** — Non-blocking UI, all I/O happens in the background
+- 🎧 **High-quality playback** — Powered by mpv with gapless playback support
+- 🔀 **Queue management** — Add, remove, reorder, shuffle, and repeat
+- 🔍 **Fast search** — Search across tracks, albums, and artists
+- 📚 **Multiple providers** — Local filesystem or Melodee API server
+- ⚙️ **Configurable** — Custom keybindings, themes, and profiles
+- ♿ **Accessible** — NO_COLOR support, works at 80×24
 
-### Optional / provider-specific
-- **Filesystem provider**: a directory of music files accessible on this machine
-- **Melodee provider**: a reachable Melodee server + credentials (password is read from an env var)
+## Installation
 
-## Quickstart (run locally)
+### Prerequisites
 
-### 1) Install mpv
+- **Go 1.22+**
+- **mpv** media player
 
-On Linux (Debian/Ubuntu):
+#### Install mpv
 
 ```bash
-sudo apt-get update
+# Debian/Ubuntu
 sudo apt-get install -y mpv
-```
 
-On macOS (Homebrew):
-
-```bash
+# macOS (Homebrew)
 brew install mpv
+
+# Arch Linux
+sudo pacman -S mpv
+
+# Fedora
+sudo dnf install mpv
 ```
 
-On Arch:
+### Build from source
 
 ```bash
-sudo pacman -S mpv
+git clone https://github.com/yourusername/tunez.git
+cd tunez/src
+go build -o tunez ./cmd/tunez
+./tunez --version
 ```
 
-### 2) Create a config file
+## Quickstart
 
-Tunez reads a TOML config file.
-
-- Default location (Linux/macOS): `~/.config/tunez/config.toml`
-- You can also pass `-config /path/to/config.toml`
-
-Start from the example:
+### 1. Create a config file
 
 ```bash
 mkdir -p ~/.config/tunez
 cp examples/config.example.toml ~/.config/tunez/config.toml
 ```
 
-Then edit `~/.config/tunez/config.toml` and set at least:
-- `active_profile`
-- a valid provider profile
-- `profiles.settings.roots` (for `filesystem`) pointing at a real folder
+### 2. Edit the config
 
-Config reference: `docs/CONFIG.md`.
+Point Tunez at your music library:
 
-### 3) Run Tunez
+```toml
+active_profile = "local"
 
-The Go module lives in `src/`:
+[[profiles]]
+id = "local"
+name = "My Music"
+provider = "filesystem"
+enabled = true
 
-```bash
-cd src
-go run ./cmd/tunez
+[profiles.settings]
+roots = ["/home/you/Music"]
 ```
 
-Useful flags:
+### 3. Run Tunez
 
 ```bash
-cd src
-go run ./cmd/tunez -version
-go run ./cmd/tunez -doctor
-go run ./cmd/tunez -config ~/.config/tunez/config.toml
+./tunez
 ```
 
-`-doctor` checks that the config parses, `mpv` is discoverable, and the active provider initializes.
-
-## Testing
+Or run the doctor to verify your setup:
 
 ```bash
-cd src
-go test ./...
+./tunez -doctor
 ```
 
-## Build
+## Keybindings
+
+### Navigation
+
+| Key | Action |
+|-----|--------|
+| `j` / `↓` | Move down |
+| `k` / `↑` | Move up |
+| `Enter` | Select / Play |
+| `Tab` | Next screen |
+| `Shift+Tab` | Previous screen |
+| `/` | Search |
+| `?` | Help |
+| `Ctrl+C` | Quit |
+
+### Playback
+
+| Key | Action |
+|-----|--------|
+| `Space` | Play / Pause |
+| `n` | Next track |
+| `p` | Previous track |
+| `h` / `l` | Seek -5s / +5s |
+| `H` / `L` | Seek -30s / +30s |
+| `-` / `+` | Volume down / up |
+| `m` | Mute |
+| `s` | Toggle shuffle |
+| `r` | Cycle repeat (off → all → one) |
+
+### Queue
+
+| Key | Action |
+|-----|--------|
+| `a` | Add to queue |
+| `A` / `P` | Play next |
+| `x` | Remove from queue |
+| `u` / `d` | Move up / down |
+| `C` | Clear queue |
+
+## Configuration
+
+Tunez uses a TOML configuration file located at:
+- **Linux/macOS**: `~/.config/tunez/config.toml`
+- **Windows**: `%APPDATA%\Tunez\config.toml`
+
+### Example config
+
+```toml
+config_version = 1
+active_profile = "local"
+
+[ui]
+theme = "rainbow"
+page_size = 100
+no_emoji = false
+
+[player]
+mpv_path = "mpv"
+initial_volume = 70
+seek_small_seconds = 5
+seek_large_seconds = 30
+volume_step = 5
+
+[[profiles]]
+id = "local"
+name = "Local Music"
+provider = "filesystem"
+enabled = true
+
+[profiles.settings]
+roots = ["/home/you/Music", "/mnt/nas/music"]
+scan_on_start = false
+
+[[profiles]]
+id = "melodee"
+name = "Melodee Server"
+provider = "melodee"
+enabled = true
+
+[profiles.settings]
+base_url = "https://music.example.com"
+username = "user"
+password_env = "TUNEZ_MELODEE_PASSWORD"
+```
+
+See [docs/CONFIG.md](docs/CONFIG.md) for the full configuration reference.
+
+## Themes & Accessibility
+
+Tunez respects the `NO_COLOR` environment variable for accessibility:
 
 ```bash
-cd src
-go build -o ./bin/tunez ./cmd/tunez
-./bin/tunez -doctor
-./bin/tunez
+NO_COLOR=1 ./tunez
 ```
 
-## Logs & troubleshooting
+You can also disable emoji in the config:
+
+```toml
+[ui]
+no_emoji = true
+```
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [PHASE_PLAN.md](docs/PHASE_PLAN.md) | Development roadmap and phase breakdown |
+| [PRD.md](docs/PRD.md) | Product requirements |
+| [TUI_UX.md](docs/TUI_UX.md) | Screen specifications and interactions |
+| [CONFIG.md](docs/CONFIG.md) | Configuration reference |
+| [PROVIDERS.md](docs/PROVIDERS.md) | Provider interface contract |
+| [TECH_DESIGN.md](docs/TECH_DESIGN.md) | Architecture decisions |
+
+## Troubleshooting
 
 ### Logs
-Tunez writes logs to the user config dir under `tunez/state`.
 
-On Linux this is typically:
-
-- `~/.config/tunez/state/tunez-YYYYMMDD.log`
+Tunez writes logs to `~/.config/tunez/state/tunez-YYYYMMDD.log`
 
 ### Common issues
 
 **"mpv not found"**
-- Install `mpv` and ensure it’s on `PATH`, or set `player.mpv_path` to an absolute path.
+```bash
+# Verify mpv is installed
+mpv --version
 
-**Filesystem provider fails validation**
-- Ensure `profiles.settings.roots` exists and is readable.
+# Or set an explicit path in config
+[player]
+mpv_path = "/usr/local/bin/mpv"
+```
 
-**Melodee provider authentication**
-- Set the password env var specified by `profiles.settings.password_env` (example uses `TUNEZ_MELODEE_PASSWORD`).
+**Filesystem provider fails**
+- Ensure `roots` paths exist and are readable
+- Check log file for detailed errors
 
-## Docs (source of truth)
+**Melodee authentication fails**
+- Set the password environment variable:
+  ```bash
+  export TUNEZ_MELODEE_PASSWORD="your-password"
+  ./tunez
+  ```
 
-**Start here:**
-- **`docs/PHASE_PLAN.md`** — **Comprehensive phase breakdown mapping ALL requirements to deliverable phases**
+## Contributing
 
-**Full documentation:**
-- `docs/README.md` — Documentation navigation and quick reference
-- `docs/PRD.md` — Product requirements and acceptance criteria
-- `docs/TUI_UX.md` — Screens, interactions, and keybindings
-- `docs/TECH_DESIGN.md` — Architecture + key technical decisions
-- `docs/PROVIDERS.md` — Provider interface contract
-- `docs/CONFIG.md` — Config schema + profiles + keybindings
-- `docs/TEST_STRATEGY.md` — Testing approach
-- `docs/SECURITY_PRIVACY.md` — Handling secrets, auth, privacy expectations
-- `docs/PROVIDER_FILESYSTEM.md` — Filesystem provider spec
-- `docs/PROVIDER_MELODEE_API.md` — Melodee API provider spec
-- `docs/DECISIONS.md` — Architectural trade-offs and clarifications
+Contributions are welcome! Please read the following before submitting:
 
-## Contributing (developer workflow)
+1. Keep the Bubble Tea `Update` loop free of blocking I/O
+2. Add tests for non-trivial logic
+3. Run `go test ./...` before submitting
+4. Follow existing code style (`go fmt`)
 
-- Keep the Bubble Tea `Update` loop free of blocking work; use background commands and messages.
-- Prefer small changes with tests for non-trivial logic.
-- Run `go test ./...` before opening a PR.
+```bash
+cd src
+go test ./...      # Run tests
+go fmt ./...       # Format code
+go vet ./...       # Check for issues
+```
+
+## License
+
+MIT License — see [LICENSE](LICENSE) for details.
+
+---
+
+<p align="center">
+  Made with 🎵 and Go
+</p>

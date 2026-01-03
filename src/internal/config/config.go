@@ -15,11 +15,12 @@ import (
 
 // Config holds Tunez runtime configuration loaded from TOML.
 type Config struct {
-	ConfigVersion int          `toml:"config_version"`
-	ActiveProfile string       `toml:"active_profile"`
-	UI            UIConfig     `toml:"ui"`
-	Player        PlayerConfig `toml:"player"`
-	Profiles      []Profile    `toml:"profiles"`
+	ConfigVersion int           `toml:"config_version"`
+	ActiveProfile string        `toml:"active_profile"`
+	UI            UIConfig      `toml:"ui"`
+	Player        PlayerConfig  `toml:"player"`
+	Keybindings   KeybindConfig `toml:"keybindings"`
+	Profiles      []Profile     `toml:"profiles"`
 }
 
 type UIConfig struct {
@@ -38,6 +39,23 @@ type PlayerConfig struct {
 	SeekLarge       int    `toml:"seek_large_seconds"`
 	VolumeStep      int    `toml:"volume_step"`
 	EnableAutostart bool   `toml:"autostart"`
+}
+
+// KeybindConfig allows customizing keybindings.
+type KeybindConfig struct {
+	PlayPause    string `toml:"play_pause"`
+	NextTrack    string `toml:"next_track"`
+	PrevTrack    string `toml:"prev_track"`
+	SeekForward  string `toml:"seek_forward"`
+	SeekBackward string `toml:"seek_backward"`
+	VolumeUp     string `toml:"volume_up"`
+	VolumeDown   string `toml:"volume_down"`
+	Mute         string `toml:"mute"`
+	Shuffle      string `toml:"shuffle"`
+	Repeat       string `toml:"repeat"`
+	Search       string `toml:"search"`
+	Help         string `toml:"help"`
+	Quit         string `toml:"quit"`
 }
 
 type Profile struct {
@@ -131,6 +149,46 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Player.NetworkTimeout == 0 {
 		cfg.Player.NetworkTimeout = 8000
+	}
+	// Keybinding defaults
+	if cfg.Keybindings.PlayPause == "" {
+		cfg.Keybindings.PlayPause = "space"
+	}
+	if cfg.Keybindings.NextTrack == "" {
+		cfg.Keybindings.NextTrack = "n"
+	}
+	if cfg.Keybindings.PrevTrack == "" {
+		cfg.Keybindings.PrevTrack = "p"
+	}
+	if cfg.Keybindings.SeekForward == "" {
+		cfg.Keybindings.SeekForward = "l"
+	}
+	if cfg.Keybindings.SeekBackward == "" {
+		cfg.Keybindings.SeekBackward = "h"
+	}
+	if cfg.Keybindings.VolumeUp == "" {
+		cfg.Keybindings.VolumeUp = "+"
+	}
+	if cfg.Keybindings.VolumeDown == "" {
+		cfg.Keybindings.VolumeDown = "-"
+	}
+	if cfg.Keybindings.Mute == "" {
+		cfg.Keybindings.Mute = "m"
+	}
+	if cfg.Keybindings.Shuffle == "" {
+		cfg.Keybindings.Shuffle = "s"
+	}
+	if cfg.Keybindings.Repeat == "" {
+		cfg.Keybindings.Repeat = "r"
+	}
+	if cfg.Keybindings.Search == "" {
+		cfg.Keybindings.Search = "/"
+	}
+	if cfg.Keybindings.Help == "" {
+		cfg.Keybindings.Help = "?"
+	}
+	if cfg.Keybindings.Quit == "" {
+		cfg.Keybindings.Quit = "ctrl+c"
 	}
 }
 
