@@ -148,6 +148,9 @@ func RenderWithProtocol(ctx context.Context, data []byte, width, height int, qua
 // ConvertToKitty converts image data to Kitty graphics protocol format.
 // The Kitty protocol transmits PNG data base64-encoded with escape sequences.
 // Width/height are in terminal cells (characters).
+//
+// For TUI compatibility, this outputs placeholder lines after the escape sequence
+// so that lipgloss can correctly measure the height for layout purposes.
 func ConvertToKitty(ctx context.Context, data []byte, widthCells, heightCells int) (string, error) {
 	// Decode image
 	img, _, err := image.Decode(bytes.NewReader(data))
@@ -155,17 +158,34 @@ func ConvertToKitty(ctx context.Context, data []byte, widthCells, heightCells in
 		return "", fmt.Errorf("decode image: %w", err)
 	}
 
-	// Scale image to target pixel size
+	// Calculate actual output height using same logic as ANSI converter
+	// This ensures lipgloss measures the same height for both protocols
+	bounds := img.Bounds()
+	imgWidth := bounds.Dx()
+	imgHeight := bounds.Dy()
+	aspectRatio := float64(imgWidth) / float64(imgHeight)
+
+	// Same calculation as ConvertToANSI with ScaleFit
+	effectiveTargetAspect := float64(widthCells) / (float64(heightCells) * 2.0)
+	var outputHeight int
+	if effectiveTargetAspect > aspectRatio {
+		outputHeight = heightCells
+	} else {
+		outputHeight = int(float64(widthCells) / aspectRatio / 2.0)
+	}
+	if outputHeight < 1 {
+		outputHeight = 1
+	}
+
+	// Scale image to target pixel size for Kitty
 	// Assume ~10 pixels per cell width, ~20 pixels per cell height (typical terminal)
 	targetWidth := widthCells * 10
 	targetHeight := heightCells * 20
 
 	// Scale maintaining aspect ratio
-	bounds := img.Bounds()
-	imgW, imgH := bounds.Dx(), bounds.Dy()
-	scale := min(float64(targetWidth)/float64(imgW), float64(targetHeight)/float64(imgH))
-	newW := int(float64(imgW) * scale)
-	newH := int(float64(imgH) * scale)
+	scale := min(float64(targetWidth)/float64(imgWidth), float64(targetHeight)/float64(imgHeight))
+	newW := int(float64(imgWidth) * scale)
+	newH := int(float64(imgHeight) * scale)
 
 	// Simple nearest-neighbor scaling
 	scaled := scaleImage(img, newW, newH)
@@ -176,15 +196,22 @@ func ConvertToKitty(ctx context.Context, data []byte, widthCells, heightCells in
 		return "", fmt.Errorf("encode png: %w", err)
 	}
 
+	// Use a consistent image ID based on content hash to allow Kitty to cache
+	// and properly manage the image across redraws
+	imageID := uint32(1) // Simple fixed ID for now
+
+	// First, delete any existing image with this ID to prevent ghosting
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("\x1b_Ga=d,d=I,i=%d\x1b\\", imageID))
+
 	// Kitty graphics protocol format:
-	// \x1b_Ga=T,f=100,s=<width>,v=<height>,c=<cols>,r=<rows>;<base64 data>\x1b\\
 	// a=T: transmit and display
-	// f=100: PNG format
+	// f=100: PNG format  
 	// c=cols, r=rows: size in terminal cells
+	// i=id: image ID for management
+	// C=1: do not move cursor after displaying (we handle positioning ourselves)
 	b64Data := base64.StdEncoding.EncodeToString(buf.Bytes())
 
-	// Kitty requires chunked transmission for large images (max 4096 bytes per chunk)
-	var result strings.Builder
 	chunkSize := 4096
 
 	for i := 0; i < len(b64Data); i += chunkSize {
@@ -202,12 +229,24 @@ func ConvertToKitty(ctx context.Context, data []byte, widthCells, heightCells in
 
 		if i == 0 {
 			// First chunk includes full header
-			result.WriteString(fmt.Sprintf("\x1b_Ga=T,f=100,c=%d,r=%d,m=%d;%s\x1b\\",
-				widthCells, heightCells, more, chunk))
+			// C=1 tells Kitty not to move the cursor, allowing text to flow over the image area
+			result.WriteString(fmt.Sprintf("\x1b_Ga=T,f=100,i=%d,c=%d,r=%d,C=1,m=%d;%s\x1b\\",
+				imageID, widthCells, heightCells, more, chunk))
 		} else {
 			// Continuation chunks
 			result.WriteString(fmt.Sprintf("\x1b_Gm=%d;%s\x1b\\", more, chunk))
 		}
+	}
+
+	// Add placeholder lines for TUI layout compatibility.
+	// These give the image visual space in the text flow.
+	// Using block characters that Kitty will render the image over.
+	for row := 0; row < outputHeight; row++ {
+		if row > 0 {
+			result.WriteString("\n")
+		}
+		// Fill with spaces - Kitty renders the image on top
+		result.WriteString(strings.Repeat(" ", widthCells))
 	}
 
 	return result.String(), nil
@@ -216,11 +255,31 @@ func ConvertToKitty(ctx context.Context, data []byte, widthCells, heightCells in
 // ConvertToSixel converts image data to Sixel format.
 // Sixel is a bitmap graphics format that works in many terminals.
 // Width/height are in terminal cells (characters).
+//
+// For TUI compatibility, this outputs placeholder lines after the escape sequence
+// so that lipgloss can correctly measure the height for layout purposes.
 func ConvertToSixel(ctx context.Context, data []byte, widthCells, heightCells int) (string, error) {
 	// Decode image
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return "", fmt.Errorf("decode image: %w", err)
+	}
+
+	// Calculate actual output height using same logic as ANSI converter
+	bounds := img.Bounds()
+	imgWidth := bounds.Dx()
+	imgHeight := bounds.Dy()
+	aspectRatio := float64(imgWidth) / float64(imgHeight)
+
+	effectiveTargetAspect := float64(widthCells) / (float64(heightCells) * 2.0)
+	var outputHeight int
+	if effectiveTargetAspect > aspectRatio {
+		outputHeight = heightCells
+	} else {
+		outputHeight = int(float64(widthCells) / aspectRatio / 2.0)
+	}
+	if outputHeight < 1 {
+		outputHeight = 1
 	}
 
 	// Scale image to target pixel size
@@ -229,11 +288,9 @@ func ConvertToSixel(ctx context.Context, data []byte, widthCells, heightCells in
 	targetHeight := heightCells * 20
 
 	// Scale maintaining aspect ratio
-	bounds := img.Bounds()
-	imgW, imgH := bounds.Dx(), bounds.Dy()
-	scale := min(float64(targetWidth)/float64(imgW), float64(targetHeight)/float64(imgH))
-	newW := int(float64(imgW) * scale)
-	newH := int(float64(imgH) * scale)
+	scale := min(float64(targetWidth)/float64(imgWidth), float64(targetHeight)/float64(imgHeight))
+	newW := int(float64(imgWidth) * scale)
+	newH := int(float64(imgHeight) * scale)
 
 	// Ensure height is multiple of 6 (sixel row height)
 	newH = ((newH + 5) / 6) * 6
@@ -242,7 +299,19 @@ func ConvertToSixel(ctx context.Context, data []byte, widthCells, heightCells in
 	scaled := scaleImage(img, newW, newH)
 
 	// Convert to sixel
-	return encodeToSixel(scaled)
+	sixelData, err := encodeToSixel(scaled)
+	if err != nil {
+		return "", err
+	}
+
+	// Add placeholder lines for TUI layout compatibility
+	var result strings.Builder
+	result.WriteString(sixelData)
+	for i := 1; i < outputHeight; i++ {
+		result.WriteString("\n")
+	}
+
+	return result.String(), nil
 }
 
 // scaleImage scales an image using nearest-neighbor interpolation

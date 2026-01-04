@@ -1695,7 +1695,13 @@ func (m Model) View() string {
 
 	// Left navigation (fixed width)
 	navWidth := 16
-	nav := m.renderNavigation(navWidth, height-6) // Account for top/bottom bars
+	// Calculate content height: total height minus top bar (2 lines with border) 
+	// and player bar (3 lines with border)
+	contentHeight := height - 5
+	if contentHeight < 10 {
+		contentHeight = 10
+	}
+	nav := m.renderNavigation(navWidth, contentHeight)
 
 	// Main content
 	mainWidth := width - navWidth - 4 // Account for borders/padding
@@ -1719,14 +1725,14 @@ func (m Model) View() string {
 		mainContent = m.renderConfig()
 	}
 
-	// Apply main pane styling
-	mainPane := mainPaneStyle.Width(mainWidth).Render(mainContent)
+	// Apply main pane styling with height constraint to prevent overflow
+	mainPane := mainPaneStyle.Width(mainWidth).Height(contentHeight).MaxHeight(contentHeight).Render(mainContent)
 
 	// Combine nav and main horizontally
 	middle := lipgloss.JoinHorizontal(lipgloss.Top, nav, mainPane)
 
 	// Bottom player bar
-	playerBar := m.renderPlayerBar()
+	playerBar := playerBarStyle.Width(width).Render(m.renderPlayerBar())
 
 	// Status line (if error)
 	statusLine := ""
@@ -2027,8 +2033,10 @@ func (m Model) renderNowPlaying() string {
 			}
 
 			// Join artwork and track info horizontally
-			infoBox := boxStyle.Render(trackInfo)
-			combined := lipgloss.JoinHorizontal(lipgloss.Top, artworkDisplay+"  ", infoBox)
+			// Style the info box to match artwork height for proper alignment
+			artworkLines := strings.Count(artworkDisplay, "\n") + 1
+			infoBox := boxStyle.Height(artworkLines).Render(trackInfo)
+			combined := lipgloss.JoinHorizontal(lipgloss.Top, artworkDisplay, "  ", infoBox)
 			b.WriteString(combined)
 		} else {
 			b.WriteString(boxStyle.Render(trackInfo))

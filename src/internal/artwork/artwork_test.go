@@ -173,15 +173,18 @@ func TestRgbTo256(t *testing.T) {
 }
 
 func TestDefaultArtwork(t *testing.T) {
-	// Should return ANSI art from embedded PNG
+	// Should return art from embedded PNG (format depends on detected terminal)
 	art := DefaultArtwork(20, 10)
 	if art == "" {
 		t.Error("expected non-empty default artwork")
 	}
 
-	// Should contain ANSI escape codes
-	if !strings.Contains(art, "\x1b[") {
-		t.Error("expected ANSI escape codes in default artwork")
+	// Should contain escape codes (ANSI \x1b[ or Kitty \x1b_G or Sixel \x1bP)
+	hasANSI := strings.Contains(art, "\x1b[")
+	hasKitty := strings.Contains(art, "\x1b_G")
+	hasSixel := strings.Contains(art, "\x1bP")
+	if !hasANSI && !hasKitty && !hasSixel {
+		t.Error("expected escape codes in default artwork")
 	}
 
 	// Should be cached (call again and verify same result)
