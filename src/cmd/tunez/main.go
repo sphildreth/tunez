@@ -59,6 +59,8 @@ Playback:
         Add random tracks to queue (uses ui.page_size from config)
   -play
         Auto-play first track in queue (use with -artist, -album, or -random)
+  -clear-queue
+        Clear the queue before adding new tracks
 
 Examples:
   tunez                                    # Start interactive TUI
@@ -68,6 +70,7 @@ Examples:
   tunez --random --play                    # Play random tracks
   tunez --artist "Pink Floyd" --play       # Play artist
   tunez --artist "Queen" --album "News"    # Queue matching album
+  tunez --clear-queue --artist "Beatles"   # Clear queue, then add Beatles
 
 `)
 	}
@@ -81,6 +84,7 @@ Examples:
 	searchAlbum := flag.String("album", "", "")
 	autoPlay := flag.Bool("play", false, "")
 	randomPlay := flag.Bool("random", false, "")
+	clearQueue := flag.Bool("clear-queue", false, "")
 	flag.Parse()
 
 	if *showVersion {
@@ -184,6 +188,7 @@ Examples:
 		SearchAlbum:  *searchAlbum,
 		AutoPlay:     *autoPlay,
 		RandomPlay:   *randomPlay,
+		ClearQueue:   *clearQueue,
 	}
 
 	model := app.New(cfg, prov, func(p config.Profile) (provider.Provider, error) {

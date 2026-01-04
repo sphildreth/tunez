@@ -206,7 +206,7 @@ func ConvertToKitty(ctx context.Context, data []byte, widthCells, heightCells in
 
 	// Kitty graphics protocol format:
 	// a=T: transmit and display
-	// f=100: PNG format  
+	// f=100: PNG format
 	// c=cols, r=rows: size in terminal cells
 	// i=id: image ID for management
 	// C=1: do not move cursor after displaying (we handle positioning ourselves)

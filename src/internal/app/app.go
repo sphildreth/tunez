@@ -104,6 +104,7 @@ type StartupOptions struct {
 	SearchAlbum  string // --album flag
 	AutoPlay     bool   // --play flag
 	RandomPlay   bool   // --random flag
+	ClearQueue   bool   // --clear-queue flag
 }
 
 type Model struct {
@@ -1352,6 +1353,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "No tracks found for startup search"
 			return m, nil
 		}
+		// Clear queue first if requested
+		if m.startupOpts.ClearQueue {
+			m.logger.Debug("clearing queue before adding tracks")
+			m.queue.Clear()
+		}
 		// Add all tracks to queue
 		for i, t := range msg.tracks {
 			m.logger.Debug("adding startup track to queue", slog.Int("index", i), slog.String("track_id", t.ID), slog.String("title", t.Title))
@@ -1377,6 +1383,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(msg.tracks) == 0 {
 			m.status = "No tracks found for random play"
 			return m, nil
+		}
+		// Clear queue first if requested
+		if m.startupOpts.ClearQueue {
+			m.logger.Debug("clearing queue before adding random tracks")
+			m.queue.Clear()
 		}
 		// Add all tracks to queue
 		for _, t := range msg.tracks {
@@ -1690,18 +1701,45 @@ func (m Model) View() string {
 		height = 24
 	}
 
+	// Debug: log layout dimensions on each render
+	m.logger.Debug("View render",
+		slog.Int("raw_width", m.width),
+		slog.Int("raw_height", m.height),
+		slog.Int("effective_width", width),
+		slog.Int("effective_height", height),
+		slog.Int("screen", int(m.screen)),
+		slog.String("screen_name", m.screenTitle()),
+	)
+
+	// Clear any Kitty graphics when not on Now Playing or when artwork is disabled.
+	// This prevents ghost images from persisting across screen transitions.
+	var kittyImageClear string
+	if m.screen != screenNowPlaying || !m.cfg.Artwork.Enabled {
+		// Delete any existing Kitty image with ID 1 (our standard ID)
+		kittyImageClear = "\x1b_Ga=d,d=I,i=1\x1b\\"
+	}
+
 	// Top bar
 	topBar := m.renderTopBar(width)
+	topBarHeight := lipgloss.Height(topBar)
 
 	// Left navigation (fixed width)
 	navWidth := 16
-	// Calculate content height: total height minus top bar (2 lines with border) 
+	// Calculate content height: total height minus top bar (2 lines with border)
 	// and player bar (3 lines with border)
 	contentHeight := height - 5
 	if contentHeight < 10 {
 		contentHeight = 10
 	}
+
+	m.logger.Debug("View layout calculation",
+		slog.Int("top_bar_height", topBarHeight),
+		slog.Int("content_height", contentHeight),
+		slog.Int("nav_width", navWidth),
+	)
+
 	nav := m.renderNavigation(navWidth, contentHeight)
+	navHeight := lipgloss.Height(nav)
 
 	// Main content
 	mainWidth := width - navWidth - 4 // Account for borders/padding
@@ -1725,14 +1763,26 @@ func (m Model) View() string {
 		mainContent = m.renderConfig()
 	}
 
+	mainContentHeight := lipgloss.Height(mainContent)
+
 	// Apply main pane styling with height constraint to prevent overflow
 	mainPane := mainPaneStyle.Width(mainWidth).Height(contentHeight).MaxHeight(contentHeight).Render(mainContent)
+	mainPaneHeight := lipgloss.Height(mainPane)
+
+	m.logger.Debug("View content heights",
+		slog.Int("nav_height", navHeight),
+		slog.Int("main_content_raw_height", mainContentHeight),
+		slog.Int("main_pane_height", mainPaneHeight),
+		slog.Int("main_width", mainWidth),
+	)
 
 	// Combine nav and main horizontally
 	middle := lipgloss.JoinHorizontal(lipgloss.Top, nav, mainPane)
+	middleHeight := lipgloss.Height(middle)
 
 	// Bottom player bar
 	playerBar := playerBarStyle.Width(width).Render(m.renderPlayerBar())
+	playerBarHeight := lipgloss.Height(playerBar)
 
 	// Status line (if error)
 	statusLine := ""
@@ -1748,6 +1798,15 @@ func (m Model) View() string {
 		mainView = lipgloss.JoinVertical(lipgloss.Left, topBar, middle, playerBar)
 	}
 
+	finalHeight := lipgloss.Height(mainView)
+	m.logger.Debug("View final dimensions",
+		slog.Int("middle_height", middleHeight),
+		slog.Int("player_bar_height", playerBarHeight),
+		slog.Int("final_view_height", finalHeight),
+		slog.Int("terminal_height", height),
+		slog.Bool("overflow", finalHeight > height),
+	)
+
 	// Overlay diagnostics panel if enabled
 	if m.showDiagnostics {
 		diagPanel := m.diagnosticsState.Render(&m)
@@ -1756,7 +1815,7 @@ func (m Model) View() string {
 			lipgloss.WithWhitespaceBackground(lipgloss.NoColor{}))
 	}
 
-	return mainView
+	return kittyImageClear + mainView
 }
 
 func (m Model) renderTopBar(width int) string {
@@ -1858,6 +1917,14 @@ func (m Model) renderNavigation(width, height int) string {
 		icon   string
 	}{screenConfig, "Config", "⚙"})
 
+	m.logger.Debug("renderNavigation",
+		slog.Int("item_count", len(items)),
+		slog.Int("requested_width", width),
+		slog.Int("requested_height", height),
+		slog.Bool("has_playlists", caps[provider.CapPlaylists]),
+		slog.Bool("has_lyrics", caps[provider.CapLyrics]),
+	)
+
 	var lines []string
 	for _, item := range items {
 		icon := item.icon
@@ -1878,7 +1945,15 @@ func (m Model) renderNavigation(width, height int) string {
 	if m.focusedPane == paneNav {
 		style = navFocusedStyle
 	}
-	return style.Width(width).Height(height).Render(content)
+	rendered := style.Width(width).Height(height).Render(content)
+
+	m.logger.Debug("renderNavigation result",
+		slog.Int("content_lines", len(lines)),
+		slog.Int("rendered_height", lipgloss.Height(rendered)),
+		slog.Int("rendered_width", lipgloss.Width(rendered)),
+	)
+
+	return rendered
 }
 
 func (m Model) renderLoading(width int) string {
@@ -2105,9 +2180,6 @@ func (m Model) renderNowPlaying() string {
 	if upNextCount == 0 {
 		b.WriteString(m.theme.Dim.Render("  (End of queue)") + "\n")
 	}
-
-	// Action hints
-	b.WriteString("\n" + m.theme.Dim.Render("[Space]Play/Pause [n/p]Next/Prev [h/l]Seek [s]Shuffle [r]Repeat"))
 
 	return b.String()
 }
@@ -2346,6 +2418,12 @@ func (m Model) renderQueue() string {
 	items := m.queue.Items()
 	currentIdx := m.queue.CurrentIndex()
 
+	m.logger.Debug("renderQueue",
+		slog.Int("queue_items", len(items)),
+		slog.Int("current_idx", currentIdx),
+		slog.Int("selection", m.selection),
+	)
+
 	// Header with queue stats
 	header := fmt.Sprintf("Queue  Items: %d", len(items))
 
@@ -2416,6 +2494,13 @@ func (m Model) renderQueue() string {
 				start = 0
 			}
 		}
+
+		m.logger.Debug("renderQueue viewport",
+			slog.Int("visible_rows", visibleRows),
+			slog.Int("start", start),
+			slog.Int("end", end),
+			slog.Int("total_rendered", len(renderedItems)),
+		)
 
 		for i := start; i < end; i++ {
 			listContent.WriteString(renderedItems[i] + "\n")
@@ -2774,8 +2859,15 @@ func (m Model) renderPlayerBar() string {
 
 	// First line: track info
 	line1 := fmt.Sprintf("%s  %s  %s  %s%s%s", state, name, timeAndProgress, volStr, shuffle, repeat)
-	// Second line: action hints
-	line2 := m.theme.Dim.Render("[Space]Play/Pause [n/p]Next/Prev [h/l]Seek [+/-]Vol [s]Shuffle [r]Repeat [?]Help")
+
+	// Second line: action hints (shortened for narrow terminals)
+	// Full hint is ~85 chars, shorten if needed
+	var line2 string
+	if m.width < 90 {
+		line2 = m.theme.Dim.Render("[Space]Play [n/p]Skip [h/l]Seek [+/-]Vol [?]Help")
+	} else {
+		line2 = m.theme.Dim.Render("[Space]Play/Pause [n/p]Next/Prev [h/l]Seek [+/-]Vol [s]Shuffle [r]Repeat [?]Help")
+	}
 
 	return line1 + "\n" + line2
 }
@@ -2855,6 +2947,7 @@ func (m Model) nextScreen() screen {
 	if next > screenConfig {
 		next = screenNowPlaying
 	}
+	m.logger.Debug("nextScreen", slog.Int("from", int(m.screen)), slog.Int("to", int(next)))
 	return next
 }
 
@@ -2879,6 +2972,7 @@ func (m Model) prevScreen() screen {
 	if prev == screenLoading {
 		prev = screenConfig
 	}
+	m.logger.Debug("prevScreen", slog.Int("from", int(m.screen)), slog.Int("to", int(prev)))
 	return prev
 }
 
