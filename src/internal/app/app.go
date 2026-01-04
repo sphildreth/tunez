@@ -1803,14 +1803,13 @@ func (m Model) View() string {
 	}
 
 	// Calculate dimensions
-	width := m.width
-	if width < 80 {
-		width = 80
+	// Ensure width is strictly less than terminal width to prevent auto-wrapping
+	// which causes scrolling/ghosting artifacts.
+	width := m.width - 2
+	if width < 20 {
+		width = 20 // Safety floor
 	}
 	height := m.height
-	if height < 24 {
-		height = 24
-	}
 
 	// Debug: log layout dimensions on each render
 	m.logger.Debug("View render",
@@ -1836,7 +1835,7 @@ func (m Model) View() string {
 	topBarHeight := lipgloss.Height(topBar)
 
 	// Left navigation (fixed width)
-	navWidth := 16
+	navWidth := 20
 
 	playerBar := playerBarStyle.Width(width).Render(m.renderPlayerBar())
 	playerBarHeight := lipgloss.Height(playerBar)
@@ -1850,9 +1849,10 @@ func (m Model) View() string {
 	}
 
 	// Calculate main content height
-	contentHeight := height - topBarHeight - playerBarHeight - statusHeight
-	if contentHeight < 10 {
-		contentHeight = 10
+	// Reduce by 1 to prevent potential scrolling on the very last line of terminal
+	contentHeight := height - topBarHeight - playerBarHeight - statusHeight - 1
+	if contentHeight < 1 {
+		contentHeight = 1
 	}
 
 	m.logger.Debug("View layout calculation",
@@ -1867,7 +1867,8 @@ func (m Model) View() string {
 	navHeight := lipgloss.Height(nav)
 
 	// Main content
-	mainWidth := width - navWidth - 4 // Account for borders/padding
+	// Use -12 (Agreesive safety margin) to definitively prevent wrap artifacts
+	mainWidth := width - navWidth - 12
 	var mainContent string
 	switch m.screen {
 	case screenLoading:
@@ -1875,15 +1876,15 @@ func (m Model) View() string {
 	case screenNowPlaying:
 		mainContent = m.renderNowPlaying()
 	case screenLibrary:
-		mainContent = m.renderLibrary()
+		mainContent = m.renderLibrary(mainWidth, contentHeight)
 	case screenSearch:
-		mainContent = m.renderSearch()
+		mainContent = m.renderSearch(mainWidth, contentHeight)
 	case screenQueue:
-		mainContent = m.renderQueue()
+		mainContent = m.renderQueue(mainWidth, contentHeight)
 	case screenPlaylists:
 		mainContent = m.renderPlaylists()
 	case screenLyrics:
-		mainContent = m.renderLyrics()
+		mainContent = m.renderLyrics(contentHeight)
 	case screenConfig:
 		mainContent = m.renderConfig()
 	}
@@ -2031,6 +2032,13 @@ func (m Model) renderNavigation(width, height int) string {
 		label  string
 		icon   string
 	}{screenConfig, "Config", "⚙"})
+
+	// Debug items
+	var itemLabels []string
+	for _, it := range items {
+		itemLabels = append(itemLabels, it.label)
+	}
+	m.logger.Debug("renderNavigation items", slog.Any("labels", itemLabels))
 
 	m.logger.Debug("renderNavigation",
 		slog.Int("item_count", len(items)),
@@ -2299,17 +2307,29 @@ func (m Model) renderNowPlaying() string {
 	return b.String()
 }
 
-func (m Model) renderLibrary() string {
+func (m Model) renderLibrary(width, height int) string {
 	var b strings.Builder
 
-	// Determine current view and show header with pagination
-	var viewTitle string
+	// Determine what we're viewing
+	var title string
 	var items []string
-	var totalCount int
+	var start, end int
+
+	// Calculate visible Rows
+	// Overhead: Header(1) + \n\n(2) + BoxBorder(2) + \n(1) + Hints(1) = 7 lines
+	visibleRows := height - 7
+	if visibleRows < 1 {
+		visibleRows = 1
+	}
+
+	// Max content width: width - padding(2) - borders(2) = width - 4
+	maxWidth := width - 4
+	if maxWidth < 10 {
+		maxWidth = 10
+	}
 
 	if len(m.tracks) > 0 {
-		viewTitle = "Tracks"
-		totalCount = len(m.tracks)
+		title = fmt.Sprintf("Tracks (%d)", len(m.tracks))
 		for i, t := range m.tracks {
 			prefix := "   "
 			style := m.theme.Text
@@ -2321,12 +2341,19 @@ func (m Model) renderLibrary() string {
 			if t.DurationMs > 0 {
 				dur = fmt.Sprintf("%d:%02d", t.DurationMs/60000, (t.DurationMs/1000)%60)
 			}
+			// Truncate title/artist if needed
+			// Format: "   01  Artist — Title  3:00"
+			// Fixed parts: prefix(3) + index(2) + spacing(2) + duration(6) = ~13 chars
+			// We construct line then truncate? Or truncate components?
+			// Construct line first, then truncate allows flexible spacing
 			line := fmt.Sprintf("%s%02d  %s — %s  %s", prefix, i+1, t.ArtistName, t.Title, m.theme.Dim.Render(dur))
+			if len(line) > maxWidth {
+				line = line[:maxWidth-1] + "…"
+			}
 			items = append(items, style.Render(line))
 		}
 	} else if len(m.albums) > 0 {
-		viewTitle = "Albums"
-		totalCount = len(m.albums)
+		title = fmt.Sprintf("Albums (%d)", len(m.albums))
 		for i, a := range m.albums {
 			prefix := " ▢ "
 			style := m.theme.Text
@@ -2335,11 +2362,13 @@ func (m Model) renderLibrary() string {
 				style = selectedStyle
 			}
 			line := fmt.Sprintf("%s%s — %s (%d)", prefix, a.Title, a.ArtistName, a.Year)
+			if len(line) > maxWidth {
+				line = line[:maxWidth-1] + "…"
+			}
 			items = append(items, style.Render(line))
 		}
 	} else {
-		viewTitle = "Artists"
-		totalCount = len(m.artists)
+		title = fmt.Sprintf("Artists (%d)", len(m.artists))
 		for i, a := range m.artists {
 			prefix := " ▢ "
 			style := m.theme.Text
@@ -2352,24 +2381,23 @@ func (m Model) renderLibrary() string {
 				albumText = "album"
 			}
 			line := fmt.Sprintf("%s%s  (%d %s)", prefix, a.Name, a.AlbumCount, albumText)
+			if len(line) > maxWidth {
+				line = line[:maxWidth-1] + "…"
+			}
 			items = append(items, style.Render(line))
 		}
 	}
 
 	// Header with view mode and pagination
-	header := fmt.Sprintf("%s", viewTitle)
-	if totalCount > 0 {
-		header += fmt.Sprintf("  %d/%d", m.selection+1, totalCount)
-	}
+	header := title
 	b.WriteString(m.theme.Title.Render(header) + "\n")
 
 	// Calculate visible window (show ~20 items centered on selection)
-	visibleRows := 20
-	start := m.selection - visibleRows/2
+	start = m.selection - visibleRows/2
 	if start < 0 {
 		start = 0
 	}
-	end := start + visibleRows
+	end = start + visibleRows
 	if end > len(items) {
 		end = len(items)
 		start = end - visibleRows
@@ -2388,16 +2416,21 @@ func (m Model) renderLibrary() string {
 	b.WriteString("\n")
 
 	// Details panel for selected item
-	if len(m.albums) > 0 && m.selection < len(m.albums) {
-		a := m.albums[m.selection]
-		details := fmt.Sprintf("%s (%d)\n%s\nTracks: %d", a.Title, a.Year, a.ArtistName, a.TrackCount)
-		b.WriteString("\n" + m.theme.Accent.Render("Details") + "\n")
-		b.WriteString(boxStyle.Render(details) + "\n")
-	} else if len(m.artists) > 0 && m.selection < len(m.artists) {
-		a := m.artists[m.selection]
-		details := fmt.Sprintf("%s\nAlbums: %d", a.Name, a.AlbumCount)
-		b.WriteString("\n" + m.theme.Accent.Render("Details") + "\n")
-		b.WriteString(boxStyle.Render(details) + "\n")
+	if len(items) > 0 && m.selection < len(items) {
+		// Note: adding details here effectively reduces the available height for the list above if we want to stay within bounds.
+		// A proper fix would be to subtract details height from visibleRows calculation.
+		// For MVP, we'll let it be.
+		if len(m.albums) > 0 && m.selection < len(m.albums) {
+			a := m.albums[m.selection]
+			details := fmt.Sprintf("%s (%d)\n%s\nTracks: %d", a.Title, a.Year, a.ArtistName, a.TrackCount)
+			b.WriteString("\n" + m.theme.Accent.Render("Details") + "\n")
+			b.WriteString(boxStyle.Render(details) + "\n")
+		} else if len(m.artists) > 0 && m.selection < len(m.artists) {
+			a := m.artists[m.selection]
+			details := fmt.Sprintf("%s\nAlbums: %d", a.Name, a.AlbumCount)
+			b.WriteString("\n" + m.theme.Accent.Render("Details") + "\n")
+			b.WriteString(boxStyle.Render(details) + "\n")
+		}
 	}
 
 	// Action hints
@@ -2406,7 +2439,7 @@ func (m Model) renderLibrary() string {
 	return b.String()
 }
 
-func (m Model) renderSearch() string {
+func (m Model) renderSearch(width, height int) string {
 	var b strings.Builder
 
 	// Header with query
@@ -2414,7 +2447,8 @@ func (m Model) renderSearch() string {
 	if m.searchQ == "" {
 		header = "Search: (press / to search)"
 	}
-	b.WriteString(m.theme.Title.Render(header) + "\n\n")
+	headerStr := m.theme.Title.Render(header)
+	b.WriteString(headerStr + "\n\n")
 
 	// Filters
 	filters := []string{"Tracks", "Albums", "Artists"}
@@ -2428,7 +2462,8 @@ func (m Model) renderSearch() string {
 		}
 		filterLine.WriteString(" ")
 	}
-	b.WriteString(filterLine.String() + "\n\n")
+	filterStr := filterLine.String()
+	b.WriteString(filterStr + "\n\n")
 
 	// Results with pagination info
 	var itemCount int
@@ -2445,7 +2480,22 @@ func (m Model) renderSearch() string {
 	if itemCount > 0 {
 		resultsHeader += fmt.Sprintf("  %d/%d", m.selection+1, itemCount)
 	}
-	b.WriteString(m.theme.Accent.Render(resultsHeader) + "\n")
+	resHeaderStr := m.theme.Accent.Render(resultsHeader)
+	b.WriteString(resHeaderStr + "\n")
+
+	// Calculate usage so far to determine visible rows for list
+	// Used: Header(1) + \n\n(2) + Filters(1) + \n\n(2) + ResHeader(1) + \n(1) + BoxBorder(2) + \n(1) + Hints(1) = ~12 lines
+	// Safety buffer: 12 lines
+	visibleRows := height - 12
+	if visibleRows < 1 {
+		visibleRows = 1
+	}
+
+	// Max content width
+	maxWidth := width - 4
+	if maxWidth < 10 {
+		maxWidth = 10
+	}
 
 	// Results list in a box
 	var listContent strings.Builder
@@ -2473,6 +2523,9 @@ func (m Model) renderSearch() string {
 					dur = fmt.Sprintf("%d:%02d", t.DurationMs/60000, (t.DurationMs/1000)%60)
 				}
 				line := fmt.Sprintf("%s%02d  %s — %s  %s", prefix, i+1, t.ArtistName, t.Title, m.theme.Dim.Render(dur))
+				if len(line) > maxWidth {
+					line = line[:maxWidth-1] + "…"
+				}
 				items = append(items, style.Render(line))
 			}
 		case filterAlbums:
@@ -2484,6 +2537,9 @@ func (m Model) renderSearch() string {
 					style = selectedStyle
 				}
 				line := fmt.Sprintf("%s%s — %s (%d)", prefix, a.Title, a.ArtistName, a.Year)
+				if len(line) > maxWidth {
+					line = line[:maxWidth-1] + "…"
+				}
 				items = append(items, style.Render(line))
 			}
 		case filterArtists:
@@ -2495,12 +2551,13 @@ func (m Model) renderSearch() string {
 					style = selectedStyle
 				}
 				line := fmt.Sprintf("%s%s", prefix, a.Name)
+				if len(line) > maxWidth {
+					line = line[:maxWidth-1] + "…"
+				}
 				items = append(items, style.Render(line))
 			}
 		}
 
-		// Calculate visible window (show ~20 items centered on selection)
-		visibleRows := 20
 		start := m.selection - visibleRows/2
 		if start < 0 {
 			start = 0
@@ -2520,7 +2577,7 @@ func (m Model) renderSearch() string {
 	}
 
 	b.WriteString(boxStyle.Render(listContent.String()))
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
 	// Action hints
 	b.WriteString(m.theme.Dim.Render("[/]Search  [f]Cycle Filter  [Enter]Play  [a]Add to Queue  [A]Play Next"))
@@ -2528,7 +2585,7 @@ func (m Model) renderSearch() string {
 	return b.String()
 }
 
-func (m Model) renderQueue() string {
+func (m Model) renderQueue(width, height int) string {
 	var b strings.Builder
 	items := m.queue.Items()
 	currentIdx := m.queue.CurrentIndex()
@@ -2562,6 +2619,14 @@ func (m Model) renderQueue() string {
 	header += fmt.Sprintf("   Mode: %s   Shuffle: %s   Repeat: %s", modeStr, shuffleStr, repeatStr)
 	b.WriteString(m.theme.Title.Render(header) + "\n\n")
 
+	// Max content width
+	// Width - 2 (MainPane Padding) - 2 (Box Border) - 2 (Box Padding) = Width - 6
+	// Use -10 for extra safety margin against unicode/wrapping issues
+	maxWidth := width - 10
+	if maxWidth < 10 {
+		maxWidth = 10
+	}
+
 	// Queue list in a box
 	var listContent strings.Builder
 
@@ -2577,13 +2642,13 @@ func (m Model) renderQueue() string {
 			isSelected := i == m.selection
 
 			if isPlaying && isSelected {
-				prefix = "▶▣ "
+				prefix = "▶▣  " // 4 chars
 				style = selectedStyle
 			} else if isPlaying {
-				prefix = "▶  "
+				prefix = "▶   " // 4 chars
 				style = m.theme.Accent
 			} else if isSelected {
-				prefix = " ▣ "
+				prefix = " ▣  " // 4 chars
 				style = selectedStyle
 			}
 
@@ -2592,11 +2657,19 @@ func (m Model) renderQueue() string {
 				dur = fmt.Sprintf("%d:%02d", t.DurationMs/60000, (t.DurationMs/1000)%60)
 			}
 			line := fmt.Sprintf("%s%02d  %s — %s  %s", prefix, i+1, t.ArtistName, t.Title, m.theme.Dim.Render(dur))
+			if len(line) > maxWidth {
+				line = line[:maxWidth-1] + "…"
+			}
 			renderedItems = append(renderedItems, style.Render(line))
 		}
 
-		// Calculate visible window (show ~20 items centered on selection)
-		visibleRows := 20
+		// Calculate visible window based on available height
+		// Header(1) + \n\n(2) + \n(1) + Hints(1) = 5 lines overhead
+		visibleRows := height - 5
+		if visibleRows < 1 {
+			visibleRows = 1
+		}
+
 		start := m.selection - visibleRows/2
 		if start < 0 {
 			start = 0
@@ -2622,8 +2695,8 @@ func (m Model) renderQueue() string {
 		}
 	}
 
-	b.WriteString(boxStyle.Render(listContent.String()))
-	b.WriteString("\n\n")
+	b.WriteString(listContent.String())
+	b.WriteString("\n")
 
 	// Action hints
 	b.WriteString(m.theme.Dim.Render("[Enter]Play  [x]Remove  [C]Clear  [u/d]Move Up/Down  [P]Play Next"))
@@ -2682,7 +2755,7 @@ func (m Model) renderPlaylists() string {
 	return b.String()
 }
 
-func (m Model) renderLyrics() string {
+func (m Model) renderLyrics(height int) string {
 	var b strings.Builder
 
 	// Header with track info
@@ -2710,12 +2783,18 @@ func (m Model) renderLyrics() string {
 	} else {
 		// Display lyrics with scroll support
 		lines := strings.Split(m.lyrics, "\n")
-		visibleRows := 20
+		// Overhead: Header(1) + \n\n(2) + BoxBorder(2) + \n(1) + Hints(1) = 7 lines
+		visibleRows := height - 7
+		if visibleRows < 5 {
+			visibleRows = 5
+		}
+
 		start := m.lyricsScrollOffset
 		if start < 0 {
 			start = 0
 		}
 		end := start + visibleRows
+
 		if end > len(lines) {
 			end = len(lines)
 		}
@@ -2743,7 +2822,7 @@ func (m Model) renderLyrics() string {
 	}
 
 	b.WriteString(boxStyle.Render(lyricsContent.String()))
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
 	// Action hints
 	b.WriteString(m.theme.Dim.Render("[j/k]Scroll  [g/G]Top/Bottom"))

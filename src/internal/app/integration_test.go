@@ -87,6 +87,8 @@ func createTestModel(t *testing.T) Model {
 	m := New(cfg, prov, func(p config.Profile) (provider.Provider, error) {
 		return prov, nil
 	}, pl, nil, theme, StartupOptions{}, nil, nil, nil, nil)
+	m.width = 80
+	m.height = 24
 
 	return m
 }

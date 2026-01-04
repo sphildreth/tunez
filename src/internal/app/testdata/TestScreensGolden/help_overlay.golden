@@ -1,39 +1,39 @@
-╭────────────────────────────────────────────────────────╮
-│   ═══ Help / Keybindings ═══                           │
-│                                                        │
-│ Global                                                 │
-│   tab           : Switch pane (nav ↔ content)          │
-│   ?             : Toggle help                          │
-│   q             : Quit                                 │
-│                                                        │
-│ Player                                                 │
-│   space         : Play/Pause                           │
-│   n / N         : Next / Previous track                │
-│   h / l         : Seek -5s / +5s                       │
-│   H / L         : Seek -0s / +0s                       │
-│   - / +         : Volume Down / Up                     │
-│   m             : Mute                                 │
-│   S             : Toggle Shuffle                       │
-│   r             : Cycle Repeat (off/all/one)           │
-│                                                        │
-│ Navigation                                             │
-│   ↑/↓ or j/k    : Move up/down (context-aware)         │
-│   enter         : Select / Play / Drill down           │
-│   backspace/esc : Go back (Library)                    │
-│                                                        │
-│ Search                                                 │
-│                 : Enter search mode                    │
-│   f             : Cycle filter (Tracks/Albums/Artists) │
-│                                                        │
-│ Queue                                                  │
-│   x             : Remove item                          │
-│   u / d         : Move item up / down                  │
-│   C             : Clear queue                          │
-│   P             : Play next (add after current)        │
-│                                                        │
-│ Library                                                │
-│   a             : Add to queue                         │
-│   A             : Add to queue (play next)             │
-│                                                        │
-│ Press ? or Esc to close                                │
-╰────────────────────────────────────────────────────────╯
+           ╭────────────────────────────────────────────────────────╮           
+           │   ═══ Help / Keybindings ═══                           │           
+           │                                                        │           
+           │ Global                                                 │           
+           │   tab           : Switch pane (nav ↔ content)          │           
+           │   ?             : Toggle help                          │           
+           │   q             : Quit                                 │           
+           │                                                        │           
+           │ Player                                                 │           
+           │   space         : Play/Pause                           │           
+           │   n / N         : Next / Previous track                │           
+           │   h / l         : Seek -5s / +5s                       │           
+           │   H / L         : Seek -0s / +0s                       │           
+           │   - / +         : Volume Down / Up                     │           
+           │   m             : Mute                                 │           
+           │   S             : Toggle Shuffle                       │           
+           │   r             : Cycle Repeat (off/all/one)           │           
+           │                                                        │           
+           │ Navigation                                             │           
+           │   ↑/↓ or j/k    : Move up/down (context-aware)         │           
+           │   enter         : Select / Play / Drill down           │           
+           │   backspace/esc : Go back (Library)                    │           
+           │                                                        │           
+           │ Search                                                 │           
+           │                 : Enter search mode                    │           
+           │   f             : Cycle filter (Tracks/Albums/Artists) │           
+           │                                                        │           
+           │ Queue                                                  │           
+           │   x             : Remove item                          │           
+           │   u / d         : Move item up / down                  │           
+           │   C             : Clear queue                          │           
+           │   P             : Play next (add after current)        │           
+           │                                                        │           
+           │ Library                                                │           
+           │   a             : Add to queue                         │           
+           │   A             : Add to queue (play next)             │           
+           │                                                        │           
+           │ Press ? or Esc to close                                │           
+           ╰────────────────────────────────────────────────────────╯           
