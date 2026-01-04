@@ -1830,21 +1830,35 @@ func (m Model) View() string {
 		kittyImageClear = "\x1b_Ga=d,d=I,i=1\x1b\\"
 	}
 
-	// Top bar
+	// Calculate available height dynamically
+	// Render top and bottom bars first to get their actual heights
 	topBar := m.renderTopBar(width)
 	topBarHeight := lipgloss.Height(topBar)
 
 	// Left navigation (fixed width)
 	navWidth := 16
-	// Calculate content height: total height minus top bar (2 lines with border)
-	// and player bar (3 lines with border)
-	contentHeight := height - 5
+
+	playerBar := playerBarStyle.Width(width).Render(m.renderPlayerBar())
+	playerBarHeight := lipgloss.Height(playerBar)
+
+	// Status line (if error)
+	statusLine := ""
+	statusHeight := 0
+	if m.errorMsg != "" {
+		statusLine = m.theme.Error.Render(" ⚠ " + m.errorMsg)
+		statusHeight = lipgloss.Height(statusLine)
+	}
+
+	// Calculate main content height
+	contentHeight := height - topBarHeight - playerBarHeight - statusHeight
 	if contentHeight < 10 {
 		contentHeight = 10
 	}
 
 	m.logger.Debug("View layout calculation",
 		slog.Int("top_bar_height", topBarHeight),
+		slog.Int("player_bar_height", playerBarHeight),
+		slog.Int("status_height", statusHeight),
 		slog.Int("content_height", contentHeight),
 		slog.Int("nav_width", navWidth),
 	)
@@ -1890,16 +1904,6 @@ func (m Model) View() string {
 	// Combine nav and main horizontally
 	middle := lipgloss.JoinHorizontal(lipgloss.Top, nav, mainPane)
 	middleHeight := lipgloss.Height(middle)
-
-	// Bottom player bar
-	playerBar := playerBarStyle.Width(width).Render(m.renderPlayerBar())
-	playerBarHeight := lipgloss.Height(playerBar)
-
-	// Status line (if error)
-	statusLine := ""
-	if m.errorMsg != "" {
-		statusLine = m.theme.Error.Render(" ⚠ " + m.errorMsg)
-	}
 
 	// Combine all vertically
 	var mainView string

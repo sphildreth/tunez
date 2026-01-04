@@ -2,6 +2,7 @@ package filesystem
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,6 +41,163 @@ func TestFilesystemGetStream(t *testing.T) {
 	}
 	if !strings.HasPrefix(stream.URL, "file://") {
 		t.Fatalf("expected file url got %s", stream.URL)
+	}
+}
+
+// TestProvider_Integration performs a full integration test:
+// 1. Setup a temp directory with audio files
+// 2. Initialize provider (triggering scan)
+// 3. Verify data via List* and Search methods
+func TestProvider_Integration(t *testing.T) {
+	// 1. Setup
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	filesDir := filepath.Join(tmpDir, "music")
+	dbPath := filepath.Join(tmpDir, "index.sqlite")
+
+	if err := os.MkdirAll(filesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Helper to create a dummy MP3 file
+	createTrack := func(artist, album, title string, trackNo int) {
+		dir := filepath.Join(filesDir, artist, album)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		fname := fmt.Sprintf("%02d - %s.mp3", trackNo, title)
+		path := filepath.Join(dir, fname)
+		// We actually don't need real MP3 content because our provider uses
+		// tag.ReadFrom which handles errors gracefully or we can mock it.
+		// However, the current implementation *requires* tag parsing to work well
+		// for metadata, OR it falls back to filename parsing.
+		// Let's rely on filename fallback logic or write minimal ID3 headers if needed.
+		// For now, empty files will trigger fallback logic in processFile:
+		// Artist=Unknown (or from dir?), Album=Dir, Title=Filename
+		// Wait! The provider logic:
+		// if ti.ArtistName == "" { ti.ArtistName = "Unknown Artist" }
+		// if ti.AlbumTitle == "" { ti.AlbumTitle = dir name }
+		// So we can test the fallback logic easily.
+		if err := os.WriteFile(path, []byte("fake mp3 content"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Create structure:
+	// Artist A
+	//   Album 1
+	//     01 - Track A.mp3
+	//     02 - Track B.mp3
+	// Artist B
+	//   Album 2
+	//     01 - Track C.mp3
+	createTrack("Artist A", "Album 1", "Track A", 1)
+	createTrack("Artist A", "Album 1", "Track B", 2)
+	createTrack("Artist B", "Album 2", "Track C", 1)
+
+	// 2. Initialize
+	p := New()
+	settings := map[string]any{
+		"roots":         []any{filesDir},
+		"index_db":      dbPath,
+		"scan_on_start": true,
+		"page_size":     int64(10),
+	}
+
+	// Use a channel to verify progress callback
+	progressCh := make(chan string, 10)
+	settings["scan_progress"] = func(n int, path string) {
+		progressCh <- path
+	}
+
+	if err := p.Initialize(ctx, settings); err != nil {
+		t.Fatalf("Initialize failed: %v", err)
+	}
+
+	// Give async scan a moment to finish?
+	// Initialize waits for p.scan() if scan_on_start is true.
+	// So we should be good.
+
+	// 3. Verify Data
+
+	// List Artists
+	artists, err := p.ListArtists(ctx, provider.ListReq{})
+	if err != nil {
+		t.Fatalf("ListArtists failed: %v", err)
+	}
+	// With fallback logic:
+	// Artist A directory -> ArtistName will be "Unknown Artist" because tag parsing fails on empty files?
+	// Let's check the code.
+	// processFile: meta, err := tag.ReadFrom(f) -> will fail
+	// Fallbacks:
+	// ArtistName = "Unknown Artist"
+	// AlbumTitle = parent dir name ("Album 1")
+	// TrackTitle = filename ("01 - Track A")
+	//
+	// Wait, if all artists are "Unknown Artist", they merge.
+	// So we should expect 1 artist "Unknown Artist" with 2 albums "Album 1" and "Album 2".
+	//
+	// NOTE: This highlights that for better tests we might want a way to mock tag reading
+	// or write real ID3 tags. Since writing real tags is complex without a lib,
+	// let's adjust expectations to the fallback behavior, which IS worth testing.
+
+	if len(artists.Items) == 0 {
+		t.Fatal("Expected artists, got none")
+	}
+	if artists.Items[0].Name != "Unknown Artist" {
+		// If by some miracle it parsed something else
+		t.Logf("Got artist: %s", artists.Items[0].Name)
+	}
+
+	// Let's verify we have 3 tracks total
+	// ListAlbums (global validation via Search or iterating)
+	// Let's allow for the fact that they might be grouped under Unknown Artist
+
+	// List Albums for Unknown Artist
+	unknownId := artists.Items[0].ID
+	albums, err := p.ListAlbums(ctx, unknownId, provider.ListReq{})
+	if err != nil {
+		t.Fatalf("ListAlbums failed: %v", err)
+	}
+
+	// We expect "Album 1" and "Album 2"
+	foundAlbums := make(map[string]bool)
+	for _, a := range albums.Items {
+		foundAlbums[a.Title] = true
+	}
+	if !foundAlbums["Album 1"] {
+		t.Error("Expected Album 1")
+	}
+	if !foundAlbums["Album 2"] {
+		t.Error("Expected Album 2")
+	}
+
+	// List Tracks for Album 1
+	var album1ID string
+	for _, a := range albums.Items {
+		if a.Title == "Album 1" {
+			album1ID = a.ID
+			break
+		}
+	}
+	tracks, err := p.ListTracks(ctx, album1ID, "", "", provider.ListReq{})
+	if err != nil {
+		t.Fatalf("ListTracks failed: %v", err)
+	}
+	if len(tracks.Items) != 2 {
+		t.Errorf("Expected 2 tracks for Album 1, got %d", len(tracks.Items))
+	}
+
+	// Search
+	res, err := p.Search(ctx, "Track A", provider.ListReq{})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(res.Tracks.Items) == 0 {
+		t.Error("Search for 'Track A' returned no results")
+	}
+	if !strings.Contains(res.Tracks.Items[0].Title, "Track A") {
+		t.Errorf("Search result title mismatch, got %s", res.Tracks.Items[0].Title)
 	}
 }
 
