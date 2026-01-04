@@ -41,6 +41,23 @@ const (
 	paneContent
 )
 
+var (
+	screenNames = []string{
+		"loading",
+		"now_playing",
+		"search",
+		"library",
+		"queue",
+		"playlists",
+		"lyrics",
+		"config",
+	}
+	paneNames = []string{
+		"nav",
+		"content",
+	}
+)
+
 // Layout styles
 var (
 	borderColor      = lipgloss.Color("#7C7CFF")
@@ -869,44 +886,63 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyMsg:
 		key := msg.String()
+		m.logger.Debug("keypress received",
+			slog.String("key", key),
+			slog.String("screen", screenNames[m.screen]),
+			slog.Bool("show_palette", m.showPalette),
+			slog.Int("focused_pane", int(m.focusedPane)),
+			slog.Int("selection", m.selection))
 
 		// Handle command palette input when visible
 		if m.showPalette {
 			switch key {
 			case "esc":
+				m.logger.Debug("command palette: escape pressed")
 				m.showPalette = false
 				m.paletteState.Reset()
 				return m, nil
 			case "enter":
+				m.logger.Debug("command palette: enter pressed")
 				if cmd := m.paletteState.SelectedCommand(); cmd != nil {
+					m.logger.Debug("command palette: executing command", slog.String("command_id", cmd.ID), slog.String("command_name", cmd.Name))
 					m.showPalette = false
 					m.paletteState.Reset()
 					newModel, cmd := cmd.Handler(&m)
 					return newModel, cmd
 				}
+				m.logger.Debug("command palette: enter pressed but no command selected")
 				return m, nil
 			case "up":
+				m.logger.Debug("command palette: up arrow pressed")
 				m.paletteState.SelectUp()
 				return m, nil
 			case "down":
+				m.logger.Debug("command palette: down arrow pressed")
 				m.paletteState.SelectDown()
 				return m, nil
 			case "backspace":
+				m.logger.Debug("command palette: backspace pressed")
 				m.paletteState.Backspace()
 				return m, nil
 			case "delete":
+				m.logger.Debug("command palette: delete pressed")
 				m.paletteState.Delete()
 				return m, nil
 			case "left":
+				m.logger.Debug("command palette: left arrow pressed")
 				m.paletteState.CursorLeft()
 				return m, nil
 			case "right":
+				m.logger.Debug("command palette: right arrow pressed")
 				m.paletteState.CursorRight()
 				return m, nil
 			default:
 				// Insert printable characters
 				if len(key) == 1 && key[0] >= 32 && key[0] <= 126 {
+					m.logger.Debug("command palette: inserting character", slog.String("char", key))
 					m.paletteState.InsertChar(rune(key[0]))
+				} else {
+					m.logger.Debug("command palette: unhandled key", slog.String("key", key))
 				}
 				return m, nil
 			}
@@ -914,6 +950,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Open command palette with : or ctrl+p
 		if key == ":" || key == "ctrl+p" {
+			m.logger.Debug("opening command palette", slog.String("trigger_key", key))
 			m.showPalette = true
 			m.paletteState.Reset()
 			return m, nil
@@ -921,23 +958,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Toggle diagnostics overlay with ctrl+d
 		if key == "ctrl+d" {
+			m.logger.Debug("toggling diagnostics overlay", slog.Bool("show_diagnostics", !m.showDiagnostics))
 			m.showDiagnostics = !m.showDiagnostics
 			return m, nil
 		}
 
 		// ESC closes help overlay or goes back
 		if key == "esc" {
+			m.logger.Debug("esc key pressed",
+				slog.Bool("show_diagnostics", m.showDiagnostics),
+				slog.Bool("show_help", m.showHelp),
+				slog.String("screen", screenNames[m.screen]))
 			if m.showDiagnostics {
+				m.logger.Debug("closing diagnostics overlay")
 				m.showDiagnostics = false
 				return m, nil
 			}
 			if m.showHelp {
+				m.logger.Debug("closing help overlay")
 				m.showHelp = false
 				return m, nil
 			}
 			// ESC can also go back in library navigation
 			if m.screen == screenLibrary {
 				if len(m.tracks) > 0 {
+					m.logger.Debug("library navigation: going back from tracks to albums")
 					m.tracks = nil
 					m.tracksCursor = ""
 					m.currentAlbumID = ""
@@ -945,6 +990,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				if len(m.albums) > 0 {
+					m.logger.Debug("library navigation: going back from albums to artists")
 					m.albums = nil
 					m.albumsCursor = ""
 					m.currentArtistID = ""
@@ -952,18 +998,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 			}
+			m.logger.Debug("esc key: no action taken")
 			return m, nil
 		}
 
 		// Handle configurable keybindings first (player controls)
 		if matchKey(key, m.cfg.Keybindings.Quit) {
+			m.logger.Debug("quit key pressed", slog.String("key", key))
 			return m, tea.Quit
 		}
 		if matchKey(key, m.cfg.Keybindings.Help) {
+			m.logger.Debug("help toggle key pressed", slog.String("key", key), slog.Bool("show_help", !m.showHelp))
 			m.showHelp = !m.showHelp
 			return m, nil
 		}
 		if matchKey(key, m.cfg.Keybindings.Mute) {
+			m.logger.Debug("mute toggle key pressed", slog.String("key", key), slog.Bool("muted", !m.muted))
 			m.muted = !m.muted
 			return m, func() tea.Msg {
 				if err := m.player.SetMute(m.muted); err != nil {
@@ -973,11 +1023,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if matchKey(key, m.cfg.Keybindings.Shuffle) {
+			m.logger.Debug("shuffle toggle key pressed", slog.String("key", key), slog.Bool("shuffled", !m.queue.IsShuffled()))
 			m.queue.ToggleShuffle()
 			return m, nil
 		}
 		if matchKey(key, m.cfg.Keybindings.Repeat) {
+			m.logger.Debug("repeat cycle key pressed", slog.String("key", key), slog.Int("current_repeat", int(m.queue.RepeatMode())))
 			m.queue.CycleRepeat()
+			m.logger.Debug("repeat mode changed", slog.Int("new_repeat", int(m.queue.RepeatMode())))
 			return m, nil
 		}
 		if matchKey(key, m.cfg.Keybindings.PlayPause) {
@@ -1011,10 +1064,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if matchKey(key, m.cfg.Keybindings.VolumeDown) {
+			oldVolume := m.volume
 			m.volume -= float64(m.cfg.Player.VolumeStep)
 			if m.volume < 0 {
 				m.volume = 0
 			}
+			m.logger.Debug("volume down key pressed", slog.String("key", key), slog.Float64("old_volume", oldVolume), slog.Float64("new_volume", m.volume))
 			return m, func() tea.Msg {
 				if err := m.player.SetVolume(m.volume); err != nil {
 					return playerMsg{Err: err}
@@ -1023,10 +1078,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if matchKey(key, m.cfg.Keybindings.VolumeUp) || key == "=" {
+			oldVolume := m.volume
 			m.volume += float64(m.cfg.Player.VolumeStep)
 			if m.volume > 100 {
 				m.volume = 100
 			}
+			m.logger.Debug("volume up key pressed", slog.String("key", key), slog.Float64("old_volume", oldVolume), slog.Float64("new_volume", m.volume))
 			return m, func() tea.Msg {
 				if err := m.player.SetVolume(m.volume); err != nil {
 					return playerMsg{Err: err}
@@ -1035,6 +1092,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if matchKey(key, m.cfg.Keybindings.Search) {
+			m.logger.Debug("search key pressed", slog.String("key", key), slog.String("old_screen", screenNames[m.screen]))
 			m.screen = screenSearch
 			m.searchQ = ""
 			m.searchResults = provider.SearchResults{}
@@ -1046,29 +1104,44 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch key {
 		case "tab":
 			// Tab switches focus between nav and content panes
+			m.logger.Debug("tab key pressed", slog.String("old_focused_pane", paneNames[m.focusedPane]))
 			if m.focusedPane == paneNav {
 				m.focusedPane = paneContent
+				m.logger.Debug("focus switched to content pane")
 			} else {
 				m.focusedPane = paneNav
+				m.logger.Debug("focus switched to nav pane")
 			}
 			return m, nil
 		case "H":
+			m.logger.Debug("seek backward large key pressed", slog.String("key", key), slog.Int("seek_large", m.cfg.Player.SeekLarge))
 			return m, m.seekCmd(float64(-m.cfg.Player.SeekLarge))
 		case "L":
+			m.logger.Debug("seek forward large key pressed", slog.String("key", key), slog.Int("seek_large", m.cfg.Player.SeekLarge))
 			return m, m.seekCmd(float64(m.cfg.Player.SeekLarge))
 		case "a":
 			if t, ok := m.selectedTrack(); ok {
+				m.logger.Debug("add track to queue key pressed", slog.String("key", key), slog.String("track_title", t.Title), slog.String("track_id", t.ID))
 				return m, m.addTrackCmd(t)
+			} else {
+				m.logger.Debug("add track to queue key pressed but no track selected", slog.String("key", key))
 			}
 		case "A":
 			if t, ok := m.selectedTrack(); ok {
+				m.logger.Debug("add track next to queue key pressed", slog.String("key", key), slog.String("track_title", t.Title), slog.String("track_id", t.ID))
 				return m, m.addNextTrackCmd(t)
+			} else {
+				m.logger.Debug("add track next to queue key pressed but no track selected", slog.String("key", key))
 			}
 		case "P":
 			if t, ok := m.selectedTrack(); ok {
+				m.logger.Debug("play track next key pressed", slog.String("key", key), slog.String("track_title", t.Title), slog.String("track_id", t.ID))
 				return m, m.addNextTrackCmd(t)
+			} else {
+				m.logger.Debug("play track next key pressed but no track selected", slog.String("key", key))
 			}
 		case "down", "j":
+			m.logger.Debug("navigation down key pressed", slog.String("key", key), slog.String("screen", screenNames[m.screen]), slog.String("focused_pane", paneNames[m.focusedPane]), slog.Int("current_selection", m.selection))
 			if m.focusedPane == paneNav {
 				// Navigate between screens
 				m.screen = m.nextScreen()
@@ -1115,6 +1188,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "up", "k":
+			m.logger.Debug("navigation up key pressed", slog.String("key", key), slog.String("screen", screenNames[m.screen]), slog.String("focused_pane", paneNames[m.focusedPane]), slog.Int("current_selection", m.selection))
 			if m.focusedPane == paneNav {
 				// Navigate between screens
 				m.screen = m.prevScreen()
@@ -1135,8 +1209,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "h", "left", "backspace":
+			m.logger.Debug("navigation left/back key pressed", slog.String("key", key), slog.String("screen", screenNames[m.screen]))
 			if m.screen == screenLibrary {
 				if len(m.tracks) > 0 {
+					m.logger.Debug("library navigation: going back from tracks to albums")
 					m.tracks = nil
 					m.tracksCursor = ""
 					m.currentAlbumID = ""
@@ -1145,6 +1221,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				if len(m.albums) > 0 {
+					m.logger.Debug("library navigation: going back from albums to artists")
 					m.albums = nil
 					m.albumsCursor = ""
 					m.currentArtistID = ""
@@ -1154,19 +1231,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			// Seeking for other screens
+			m.logger.Debug("seeking backward small", slog.Int("seek_small", m.cfg.Player.SeekSmall))
 			return m, m.seekCmd(float64(-m.cfg.Player.SeekSmall))
 		case "l", "right":
+			m.logger.Debug("navigation right/enter key pressed", slog.String("key", key), slog.String("screen", screenNames[m.screen]))
 			if m.screen == screenLibrary {
 				return m.handleEnter()
 			}
+			m.logger.Debug("seeking forward small", slog.Int("seek_small", m.cfg.Player.SeekSmall))
 			return m, m.seekCmd(float64(m.cfg.Player.SeekSmall))
 		case "f":
 			if m.screen == screenSearch {
+				m.logger.Debug("search filter cycle key pressed", slog.String("key", key), slog.Int("current_filter", int(m.searchFilter)))
 				m.searchFilter = (m.searchFilter + 1) % 3
 				m.selection = 0
+				m.logger.Debug("search filter changed", slog.Int("new_filter", int(m.searchFilter)))
 				return m, nil
 			}
 		case "enter":
+			m.logger.Debug("enter key pressed", slog.String("key", key), slog.String("screen", screenNames[m.screen]), slog.Int("selection", m.selection))
 			return m.handleEnter()
 		case "x":
 			m.logger.Debug("x key pressed", slog.Int("screen", int(m.screen)), slog.Int("selection", m.selection), slog.Int("focused_pane", int(m.focusedPane)))
@@ -1190,68 +1273,96 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "d":
 			if m.screen == screenQueue {
+				m.logger.Debug("queue move down key pressed", slog.String("key", key), slog.Int("selection", m.selection), slog.Int("queue_len", m.queue.Len()))
 				if m.selection < m.queue.Len()-1 {
 					_ = m.queue.Move(m.selection, m.selection+1)
 					m.selection++
+					m.logger.Debug("moved track down in queue", slog.Int("new_selection", m.selection))
+				} else {
+					m.logger.Debug("cannot move down: already at bottom")
 				}
 				return m, m.saveQueueCmd()
 			}
 		case "u":
 			if m.screen == screenQueue {
+				m.logger.Debug("queue move up key pressed", slog.String("key", key), slog.Int("selection", m.selection), slog.Int("queue_len", m.queue.Len()))
 				if m.selection > 0 {
 					_ = m.queue.Move(m.selection, m.selection-1)
 					m.selection--
+					m.logger.Debug("moved track up in queue", slog.Int("new_selection", m.selection))
+				} else {
+					m.logger.Debug("cannot move up: already at top")
 				}
 				return m, m.saveQueueCmd()
 			}
 		case "J":
 			if m.screen == screenQueue {
+				m.logger.Debug("queue move down (alt) key pressed", slog.String("key", key), slog.Int("selection", m.selection), slog.Int("queue_len", m.queue.Len()))
 				if m.selection < m.queue.Len()-1 {
 					_ = m.queue.Move(m.selection, m.selection+1)
 					m.selection++
+					m.logger.Debug("moved track down in queue", slog.Int("new_selection", m.selection))
+				} else {
+					m.logger.Debug("cannot move down: already at bottom")
 				}
 				return m, m.saveQueueCmd()
 			}
 		case "K":
 			if m.screen == screenQueue {
+				m.logger.Debug("queue move up (alt) key pressed", slog.String("key", key), slog.Int("selection", m.selection), slog.Int("queue_len", m.queue.Len()))
 				if m.selection > 0 {
 					_ = m.queue.Move(m.selection, m.selection-1)
 					m.selection--
+					m.logger.Debug("moved track up in queue", slog.Int("new_selection", m.selection))
+				} else {
+					m.logger.Debug("cannot move up: already at top")
 				}
 				return m, m.saveQueueCmd()
 			}
 		case "c":
 			if m.screen == screenQueue {
+				m.logger.Debug("queue clear key pressed", slog.String("key", key), slog.Int("queue_len", m.queue.Len()))
 				m.queue.Clear()
 				m.selection = 0
+				m.logger.Debug("queue cleared")
 				return m, m.saveQueueCmd()
 			}
 		case "C":
 			if m.screen == screenQueue {
+				m.logger.Debug("queue clear (alt) key pressed", slog.String("key", key), slog.Int("queue_len", m.queue.Len()))
 				m.queue.Clear()
 				m.selection = 0
+				m.logger.Debug("queue cleared")
 				return m, m.saveQueueCmd()
 			}
 		case "g":
 			// Go to top (lyrics screen)
 			if m.screen == screenLyrics {
+				m.logger.Debug("lyrics scroll to top key pressed", slog.String("key", key), slog.Int("old_scroll_offset", m.lyricsScrollOffset))
 				m.lyricsScrollOffset = 0
+				m.logger.Debug("scrolled to top of lyrics")
 				return m, nil
 			}
 		case "G":
 			// Go to bottom (lyrics screen)
 			if m.screen == screenLyrics && m.lyrics != "" {
+				m.logger.Debug("lyrics scroll to bottom key pressed", slog.String("key", key), slog.Int("old_scroll_offset", m.lyricsScrollOffset))
 				lines := strings.Split(m.lyrics, "\n")
 				m.lyricsScrollOffset = len(lines) - 20
 				if m.lyricsScrollOffset < 0 {
 					m.lyricsScrollOffset = 0
 				}
+				m.logger.Debug("scrolled to bottom of lyrics", slog.Int("new_scroll_offset", m.lyricsScrollOffset))
 				return m, nil
 			}
 		default:
 			if m.screen == screenSearch && len(key) == 1 && msg.Runes != nil {
+				m.logger.Debug("search input character", slog.String("char", key), slog.String("current_query", m.searchQ))
 				m.searchQ += key
+				m.logger.Debug("search query updated", slog.String("new_query", m.searchQ))
 				return m, m.searchCmd(m.searchQ)
+			} else {
+				m.logger.Debug("unhandled key in switch", slog.String("key", key), slog.String("screen", screenNames[m.screen]))
 			}
 		}
 	case artistsMsg:

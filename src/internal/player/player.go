@@ -69,6 +69,7 @@ func defaultIPCPath() string {
 
 // Start launches mpv (unless disabled) and connects to the IPC socket.
 func (c *Controller) Start(ctx context.Context) error {
+	c.opts.Logger.Debug("starting player controller", slog.String("ipc_path", c.opts.IPCPath), slog.Bool("disable_process", c.opts.DisableProcess))
 	c.mu.Lock()
 	// Reinitialize done channel if previously closed (for restarts)
 	select {
@@ -80,19 +81,27 @@ func (c *Controller) Start(ctx context.Context) error {
 
 	if c.opts.IPCPath == "" {
 		c.opts.IPCPath = defaultIPCPath()
+		c.opts.Logger.Debug("using default ipc path", slog.String("ipc_path", c.opts.IPCPath))
 	}
 	if !c.opts.DisableProcess {
 		if err := c.spawnMPV(ctx); err != nil {
+			c.opts.Logger.Error("failed to spawn mpv", slog.Any("err", err))
 			return err
 		}
+		c.opts.Logger.Debug("mpv process spawned")
 	}
 	if err := c.connect(ctx); err != nil {
+		c.opts.Logger.Error("failed to connect to mpv ipc", slog.Any("err", err))
 		return err
 	}
+	c.opts.Logger.Debug("connected to mpv ipc")
 	if err := c.observeProperties(); err != nil {
+		c.opts.Logger.Error("failed to observe mpv properties", slog.Any("err", err))
 		return err
 	}
+	c.opts.Logger.Debug("started observing mpv properties")
 	go c.readLoop()
+	c.opts.Logger.Debug("player controller started successfully")
 	return nil
 }
 
@@ -105,14 +114,17 @@ func (c *Controller) spawnMPV(ctx context.Context) error {
 		"--input-ipc-server=" + c.opts.IPCPath,
 	}
 	args = append(args, c.opts.ExtraArgs...)
+	c.opts.Logger.Debug("spawning mpv process", slog.String("mpv_path", c.opts.MPVPath), slog.Any("args", args))
 	c.cmd = exec.CommandContext(ctx, c.opts.MPVPath, args...)
 	if err := c.cmd.Start(); err != nil {
 		return fmt.Errorf("start mpv: %w", err)
 	}
+	c.opts.Logger.Debug("mpv process started", slog.Int("pid", c.cmd.Process.Pid))
 	return nil
 }
 
 func (c *Controller) connect(ctx context.Context) error {
+	c.opts.Logger.Debug("connecting to mpv ipc", slog.String("ipc_path", c.opts.IPCPath))
 	dial := c.opts.Dial
 	if dial == nil {
 		dial = (&net.Dialer{Timeout: 5 * time.Second}).DialContext
@@ -128,11 +140,13 @@ func (c *Controller) connect(ctx context.Context) error {
 		conn, err = dial(ctx, networkForPath(c.opts.IPCPath), c.opts.IPCPath)
 		if err == nil {
 			c.conn = conn
+			c.opts.Logger.Debug("connected to mpv ipc on attempt", slog.Int("attempt", i+1))
 			return nil
 		}
 
 		select {
 		case <-ctx.Done():
+			c.opts.Logger.Error("mpv ipc connection cancelled", slog.Any("err", ctx.Err()))
 			return fmt.Errorf("connect mpv ipc: %w", ctx.Err())
 		default:
 		}
@@ -143,9 +157,11 @@ func (c *Controller) connect(ctx context.Context) error {
 				delay = maxDelay
 			}
 			jitter := time.Duration(float64(delay) * 0.2 * rng.Float64())
+			c.opts.Logger.Debug("mpv ipc connection failed, retrying", slog.Int("attempt", i+1), slog.Any("err", err), slog.Duration("delay", delay+jitter))
 			time.Sleep(delay + jitter)
 		}
 	}
+	c.opts.Logger.Error("failed to connect to mpv ipc after retries", slog.Any("err", err))
 	return fmt.Errorf("connect mpv ipc: %w", err)
 }
 
@@ -184,6 +200,7 @@ func (c *Controller) send(cmd map[string]any) error {
 
 // Play loads a URL into mpv.
 func (c *Controller) Play(url string, headers map[string]string) error {
+	c.opts.Logger.Debug("playing track", slog.String("url", url), slog.Int("header_count", len(headers)))
 	if len(headers) > 0 {
 		var headerLines []string
 		for k, v := range headers {
@@ -191,17 +208,33 @@ func (c *Controller) Play(url string, headers map[string]string) error {
 		}
 		_ = c.send(map[string]any{"command": []any{"set_property", "http-header-fields", strings.Join(headerLines, "\n")}})
 	}
-	return c.send(map[string]any{
+	err := c.send(map[string]any{
 		"command": []any{"loadfile", url, "replace"},
 	})
+	if err != nil {
+		c.opts.Logger.Error("failed to send play command", slog.Any("err", err))
+	} else {
+		c.opts.Logger.Debug("play command sent successfully")
+	}
+	return err
 }
 
 func (c *Controller) TogglePause(paused bool) error {
-	return c.send(map[string]any{"command": []any{"set_property", "pause", paused}})
+	c.opts.Logger.Debug("toggling pause", slog.Bool("paused", paused))
+	err := c.send(map[string]any{"command": []any{"set_property", "pause", paused}})
+	if err != nil {
+		c.opts.Logger.Error("failed to send pause command", slog.Any("err", err))
+	}
+	return err
 }
 
 func (c *Controller) Seek(deltaSeconds float64) error {
-	return c.send(map[string]any{"command": []any{"seek", deltaSeconds, "relative"}})
+	c.opts.Logger.Debug("seeking", slog.Float64("delta_seconds", deltaSeconds))
+	err := c.send(map[string]any{"command": []any{"seek", deltaSeconds, "relative"}})
+	if err != nil {
+		c.opts.Logger.Error("failed to send seek command", slog.Any("err", err))
+	}
+	return err
 }
 
 func (c *Controller) SetVolume(vol float64) error {
@@ -211,11 +244,21 @@ func (c *Controller) SetVolume(vol float64) error {
 	if vol > 100 {
 		vol = 100
 	}
-	return c.send(map[string]any{"command": []any{"set_property", "volume", vol}})
+	c.opts.Logger.Debug("setting volume", slog.Float64("volume", vol))
+	err := c.send(map[string]any{"command": []any{"set_property", "volume", vol}})
+	if err != nil {
+		c.opts.Logger.Error("failed to send volume command", slog.Any("err", err))
+	}
+	return err
 }
 
 func (c *Controller) SetMute(mute bool) error {
-	return c.send(map[string]any{"command": []any{"set_property", "mute", mute}})
+	c.opts.Logger.Debug("setting mute", slog.Bool("mute", mute))
+	err := c.send(map[string]any{"command": []any{"set_property", "mute", mute}})
+	if err != nil {
+		c.opts.Logger.Error("failed to send mute command", slog.Any("err", err))
+	}
+	return err
 }
 
 func (c *Controller) Stop() error {
